@@ -1,0 +1,33 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════
+# Mapper UI — systemd service setup
+# Port: 8081
+# ═══════════════════════════════════════════════════════════
+
+sudo tee /etc/systemd/system/mapper-ui.service > /dev/null << 'EOF'
+[Unit]
+Description=Mapper Vulnerability Scanner Frontend UI
+After=network.target mapper.service
+
+[Service]
+User=halalhacker
+WorkingDirectory=/home/halalhacker/mapper/frontend
+ExecStart=/usr/bin/python3 -m http.server 8081
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Kill any existing process on port 8081
+kill $(lsof -ti:8081) 2>/dev/null
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable mapper-ui
+sudo systemctl start mapper-ui
+
+# Verify
+sudo systemctl status mapper-ui | grep -E "Active|running|failed"
+curl -s http://127.0.0.1:8081/ | head -3

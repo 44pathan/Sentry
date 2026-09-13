@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentry</title>
+    <link rel="stylesheet" href="../shared/theme.css">
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <header class="popup-header">
+        <h1 class="logo">SENTRY</h1>
+        <div class="status-indicator" title="Connection Status">
+            <span class="status-dot disconnected" id="connection-status-dot"></span>
+        </div>
+    </header>
+
+    <main class="popup-main">
+        <!-- Login Section -->
+        <section id="login-section" class="section hidden">
+            <h2 class="section-title">Authentication Required</h2>
+            <form id="login-form" class="compact-form">
+                <input type="text" id="username" placeholder="Username" required>
+                <input type="password" id="password" placeholder="Password" required>
+                <button type="submit" class="primary-btn">Sign In</button>
+            </form>
+            <div id="login-error" class="error-msg hidden"></div>
+        </section>
+
+        <!-- Main Scanner Section -->
+        <section id="main-section" class="section hidden">
+            <div class="target-info">
+                <label>Target URL:</label>
+                <input type="url" id="current-url" class="url-input" placeholder="https://example.com" value="">
+            </div>
+
+            <div class="scan-config">
+                <label>Scan Mode:</label>
+                <div class="scan-mode-selector">
+                    <button class="mode-btn active" data-mode="passive">Passive</button>
+                    <button class="mode-btn" data-mode="light">Light Active</button>
+                    <button class="mode-btn" data-mode="full">Full Active</button>
+                </div>
+            </div>
+
+            <div class="authorization">
+                <label class="checkbox-container">
+                    <input type="checkbox" id="auth-checkbox">
+                    <span class="checkmark"></span>
+                    I confirm I am authorized to scan this target
+                </label>
+            </div>
+
+            <button id="scan-btn" class="primary-btn" disabled>Scan This Page</button>
+            <div id="scan-error" class="error-msg hidden"></div>
+
+            <!-- Scan Progress -->
+            <div id="scan-progress-section" class="progress-container hidden">
+                <div class="progress-header">
+                    <span id="progress-status-text">Scanning...</span>
+                    <span id="progress-percentage">0%</span>
+                </div>
+                <div class="progress-track">
+                    <div id="progress-bar" class="progress-fill"></div>
+                </div>
+            </div>
+
+            <!-- Quick Results -->
+            <div id="quick-results-section" class="quick-results hidden">
+                <div class="gauge-container">
+                    <svg class="risk-gauge" viewBox="0 0 100 50">
+                        <path class="gauge-bg" d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="var(--border)" stroke-width="10" stroke-linecap="round"/>
+                        <path id="gauge-fill" class="gauge-fill" d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="var(--success)" stroke-width="10" stroke-linecap="round" stroke-dasharray="125" stroke-dashoffset="125"/>
+                    </svg>
+                    <div class="gauge-text">
+                        <div id="risk-score" class="score">0</div>
+                        <div id="risk-grade" class="grade">A</div>
+                    </div>
+                </div>
+
+                <div class="severity-breakdown" id="severity-breakdown">
+                    <!-- Mini cards will be injected here -->
+                </div>
+
+                <div class="action-buttons">
+                    <button id="ai-analyze-btn" class="ai-analyze-btn">
+                        <span class="sparkle">✨</span> Ask AI to Analyze
+                    </button>
+                    <button id="view-report-btn" class="secondary-btn">View Full Report</button>
+                </div>
+            </div>
+
+            <!-- Recent Scans -->
+            <div class="recent-scans-container">
+                <h3 class="subsection-title">Recent Scans</h3>
+                <ul id="recent-scans-list" class="recent-scans-list">
+                    <!-- Items will be injected here -->
+                </ul>
+            </div>
+        </section>
+    </main>
+
+    <footer class="popup-footer">
+        <div class="footer-links">
+            <a href="#" id="open-dashboard-link">Dashboard</a>
+            <span>|</span>
+            <a href="#" id="open-settings-link">Settings</a>
+        </div>
+        <div id="logged-in-user" class="user-display hidden"></div>
+    </footer>
+
+    <script type="module" src="popup.js"></script>
+</body>
+</html>

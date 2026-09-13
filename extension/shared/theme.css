@@ -1,0 +1,237 @@
+/* System font stack - Google Fonts cannot load in extensions due to CSP */
+
+:root {
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-card: #121212;
+  --bg-card-hover: #1c1c1c;
+  --bg-input: #050505;
+  --border: #2a2a2a;
+  --border-hover: #ffffff;
+  --text-primary: #ffffff;
+  --text-secondary: #cccccc;
+  --text-muted: #888888;
+  --accent: #ffffff;
+  --accent-glow: rgba(255, 255, 255, 0.2);
+  --critical: #ff3b3b;
+  --critical-bg: rgba(255, 59, 59, 0.15);
+  --high: #ffffff;
+  --high-bg: rgba(255, 255, 255, 0.1);
+  --medium: #e0e0e0;
+  --medium-bg: rgba(224, 224, 224, 0.1);
+  --low: #aaaaaa;
+  --low-bg: rgba(170, 170, 170, 0.1);
+  --info: #777777;
+  --info-bg: rgba(119, 119, 119, 0.1);
+  --success: #4caf50;
+  --success-bg: rgba(76, 175, 80, 0.15);
+  --warning: #eab308;
+  --warning-bg: rgba(234, 179, 8, 0.12);
+  --ai-accent: #8b5cf6;
+  --ai-bg: rgba(139, 92, 246, 0.1);
+  --radius: 6px;
+  --radius-sm: 4px;
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
+  --transition: all 0.2s ease;
+}
+
+/* Base Reset & Body */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Space Mono', 'JetBrains Mono', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Typography & Utilities */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.fadeIn {
+  animation: fadeIn 0.3s ease forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+  text-decoration: none;
+}
+.btn:hover {
+  background-color: var(--bg-card-hover);
+  border-color: var(--border-hover);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.btn-primary {
+  background-color: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+}
+.btn-primary:hover {
+  background-color: var(--text-secondary);
+  border-color: var(--text-secondary);
+}
+.btn-secondary {
+  background-color: transparent;
+}
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.badge.critical { background-color: var(--critical-bg); color: var(--critical); border: 1px solid var(--critical); }
+.badge.high { background-color: var(--high-bg); color: var(--high); border: 1px solid var(--high); }
+.badge.medium { background-color: var(--medium-bg); color: var(--medium); border: 1px solid var(--medium); }
+.badge.low { background-color: var(--low-bg); color: var(--low); border: 1px solid var(--low); }
+.badge.info { background-color: var(--info-bg); color: var(--info); border: 1px solid var(--info); }
+.badge.success { background-color: var(--success-bg); color: var(--success); border: 1px solid var(--success); }
+.badge.warning { background-color: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning); }
+.badge.ai { background-color: var(--ai-bg); color: var(--ai-accent); border: 1px solid var(--ai-accent); }
+
+/* Cards */
+.card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+  transition: var(--transition);
+}
+.card:hover {
+  border-color: var(--border-hover);
+}
+
+/* Forms */
+.form-group {
+  margin-bottom: 16px;
+}
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-weight: 700;
+  font-size: 12px;
+}
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  padding: 10px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: var(--radius);
+  font-family: inherit;
+  transition: var(--transition);
+}
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 5px var(--accent-glow);
+}
+
+/* Alerts */
+.alert {
+  padding: 12px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  font-size: 13px;
+  border: 1px solid transparent;
+}
+.alert.error { background-color: var(--critical-bg); color: var(--critical); border-color: var(--critical); }
+.alert.success { background-color: var(--success-bg); color: var(--success); border-color: var(--success); }
+.alert.info { background-color: var(--info-bg); color: var(--text-primary); border-color: var(--border); }
+
+/* Progress Bar */
+.progress-container {
+  width: 100%;
+  background-color: var(--bg-input);
+  border-radius: var(--radius-sm);
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.progress-bar {
+  height: 100%;
+  background-color: var(--accent);
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+/* Spinner */
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--border);
+  border-top: 3px solid var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}

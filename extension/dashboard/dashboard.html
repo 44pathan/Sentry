@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sentry — Vulnerability Scanner</title>
+  <link rel="stylesheet" href="../shared/theme.css">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════
+       APP LAYOUT (hidden if no token)
+       ═══════════════════════════════════════════ -->
+  <div id="app-page" class="app-layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <h2>Sentry</h2>
+        <span>Vuln Scanner v1.0</span>
+      </div>
+      <div class="nav-items">
+        <button class="nav-item active" data-page="dashboard" id="nav-dashboard">
+          Dashboard
+        </button>
+        <button class="nav-item" data-page="new-scan" id="nav-new-scan">
+          New Scan
+        </button>
+        <button class="nav-item" data-page="scans" id="nav-scans">
+          All Scans
+        </button>
+        <button class="nav-item" data-page="rules" id="nav-rules">
+          Rules
+        </button>
+        <button class="nav-item" data-page="ai-analysis" id="nav-ai-analysis">
+          AI Analysis <span style="display:inline-block;width:6px;height:6px;background:#9333ea;border-radius:50%;margin-left:auto;"></span>
+        </button>
+      </div>
+      <div class="sidebar-footer">
+        <div class="user-info">
+          <div class="avatar" id="user-avatar">?</div>
+          <div>
+            <div id="user-display" style="font-weight:600;color:var(--text-primary)">User</div>
+            <div style="color:var(--text-muted);font-size:11px">Extension User</div>
+          </div>
+        </div>
+        <button class="nav-item" id="btn-logout" style="margin-top:8px;color:var(--critical)">
+          Logout
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <div id="login-banner" class="alert alert-error hidden" style="margin-bottom: 20px;">
+        Not authenticated. Please log in via the extension popup.
+      </div>
+
+      <!-- ── Dashboard ──────────────────────── -->
+      <section id="page-dashboard" class="page-section">
+        <div class="page-header">
+          <h1>Dashboard</h1>
+          <p>Overview of your vulnerability scanning activity</p>
+        </div>
+        <div class="stats-grid" id="stats-grid">
+          <div class="stat-card"><div class="stat-label">Total Scans</div><div class="stat-value accent" id="stat-total">—</div></div>
+          <div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value success" id="stat-completed">—</div></div>
+          <div class="stat-card"><div class="stat-label">Running</div><div class="stat-value warning" id="stat-running">—</div></div>
+          <div class="stat-card"><div class="stat-label">Avg Risk Score</div><div class="stat-value" id="stat-risk">—</div></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Recent Scans</h3>
+            <button class="btn btn-secondary btn-sm" id="btn-new-scan-nav">+ New Scan</button>
+          </div>
+          <div id="recent-scans-table"></div>
+        </div>
+      </section>
+
+      <!-- ── New Scan ───────────────────────── -->
+      <section id="page-new-scan" class="page-section hidden">
+        <div class="page-header">
+          <h1>New Scan</h1>
+          <p>Submit a target URL for vulnerability assessment</p>
+        </div>
+        <div class="card scan-form-card">
+          <div id="scan-alert" class="alert"></div>
+          <form id="scan-form">
+            <div class="form-group">
+              <label for="scan-url">Target URL</label>
+              <input type="url" id="scan-url" placeholder="https://example.com" required>
+            </div>
+            <div class="scan-options">
+              <div class="checkbox-group">
+                <input type="checkbox" id="opt-deep" checked>
+                <label for="opt-deep">Deep Scan (check common paths)</label>
+              </div>
+              <div class="checkbox-group">
+                <input type="checkbox" id="opt-headers" checked>
+                <label for="opt-headers">Check Security Headers</label>
+              </div>
+              <div class="checkbox-group">
+                <input type="checkbox" id="opt-tls" checked>
+                <label for="opt-tls">Check TLS/SSL</label>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:16px">
+              <label for="scan-mode">Scan Mode</label>
+              <select id="scan-mode" style="width:100%;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:14px;">
+                <option value="passive">Passive Only — Safe, no payloads sent</option>
+                <option value="light_active">Light Active — XSS + SQLi probes</option>
+                <option value="full_active">Full Active — All probes (XSS, Error SQLi, Blind SQLi, LFI, CRLF)</option>
+              </select>
+              <div id="active-warning" style="display:none;margin-top:8px;padding:10px 14px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:8px;font-size:12px;color:var(--high)">
+                Active mode sends test payloads to the target. Ensure you have explicit authorization.
+              </div>
+            </div>
+
+            <!-- Advanced / Authentication Settings -->
+            <details style="margin-bottom:16px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;">
+              <summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--text-muted)">Advanced Scan Settings (Authentication & Rate Limiting)</summary>
+              <div style="margin-top:12px;display:flex;flex-direction:column;gap:12px;">
+                <div class="form-group">
+                  <label for="opt-rate-limit" style="font-size:12px">Rate Limit (Requests / Sec — 0 for unlimited)</label>
+                  <input type="number" id="opt-rate-limit" value="10" min="0" max="100" style="width:100%;padding:8px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:13px;">
+                </div>
+                <div class="form-group">
+                  <label for="opt-auth-cookies" style="font-size:12px">Session Cookies (e.g. session=xyz; token=abc)</label>
+                  <input type="text" id="opt-auth-cookies" placeholder="session=12345; auth=abcdef" style="width:100%;padding:8px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:13px;">
+                </div>
+                <div class="form-group">
+                  <label for="opt-auth-headers" style="font-size:12px">Custom Headers (e.g. Authorization: Bearer token)</label>
+                  <input type="text" id="opt-auth-headers" placeholder="Authorization: Bearer mytoken" style="width:100%;padding:8px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:13px;">
+                </div>
+              </div>
+            </details>
+
+            <div class="checkbox-group" style="margin-bottom:20px;padding:14px;background:rgba(234,179,8,0.06);border-radius:8px;border:1px solid rgba(234,179,8,0.15)">
+              <input type="checkbox" id="opt-authorized" required>
+              <label for="opt-authorized" style="color:var(--medium)">I confirm I am authorized to scan this target</label>
+            </div>
+            <button type="submit" class="btn btn-primary" id="scan-submit-btn">Start Scan</button>
+          </form>
+
+          <!-- Scan Progress (shown after submit) -->
+          <div id="scan-progress" class="hidden" style="margin-top:24px">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span class="scan-status-label" id="scan-status-text">Queued</span>
+              <span style="font-size:13px;color:var(--text-muted)" id="scan-progress-pct">0%</span>
+            </div>
+            <div class="progress-bar"><div class="fill" id="scan-progress-fill" style="width:0%"></div></div>
+            <p style="font-size:12px;color:var(--text-muted);margin-top:8px" id="scan-id-display"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── All Scans ──────────────────────── -->
+      <section id="page-scans" class="page-section hidden">
+        <div class="page-header">
+          <h1>All Scans</h1>
+          <p>History of all submitted vulnerability scans</p>
+        </div>
+        <div class="card">
+          <div id="all-scans-table"></div>
+        </div>
+      </section>
+
+      <!-- ── Scan Results / Report ──────────── -->
+      <section id="page-report" class="page-section hidden">
+        <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <h1 id="report-title">Scan Report</h1>
+            <p id="report-subtitle"></p>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary btn-sm ai-action-btn" id="btn-ask-ai-report" style="border-color: #9333ea; color: #d8b4fe;">Ask AI to Analyze</button>
+            <button class="btn btn-secondary btn-sm" id="btn-export-json">Export JSON</button>
+            <button class="btn btn-secondary btn-sm" id="btn-export-html">Export HTML</button>
+          </div>
+        </div>
+
+        <div class="stats-grid" style="grid-template-columns: 200px 1fr;">
+          <!-- Risk Gauge -->
+          <div class="card" style="display:flex;align-items:center;justify-content:center">
+            <div class="risk-gauge">
+              <div class="gauge-ring">
+                <svg viewBox="0 0 140 140">
+                  <circle class="gauge-bg" cx="70" cy="70" r="60"></circle>
+                  <circle class="gauge-fill" id="gauge-circle" cx="70" cy="70" r="60"
+                    stroke-dasharray="377" stroke-dashoffset="377"></circle>
+                </svg>
+                <div class="gauge-label">
+                  <div class="score" id="gauge-score">—</div>
+                  <div class="grade" id="gauge-grade"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Severity Breakdown -->
+          <div class="card">
+            <h3 style="margin-bottom:16px">Severity Breakdown</h3>
+            <div style="display:flex;gap:16px;flex-wrap:wrap" id="severity-breakdown"></div>
+            <p style="margin-top:16px;font-size:13px;color:var(--text-secondary)" id="report-summary"></p>
+          </div>
+        </div>
+
+        <!-- Risk Score Formula -->
+        <div class="card" style="margin-top:16px">
+          <div class="card-header"><h3>Risk Score Formula</h3></div>
+          <div id="risk-formula"></div>
+        </div>
+
+        <!-- Top Fixes -->
+        <div class="card" style="margin-top:16px">
+          <div class="card-header"><h3>Top Fixes (by Risk Reduction)</h3></div>
+          <div id="top-fixes"></div>
+        </div>
+
+        <!-- OWASP Coverage -->
+        <div class="card" style="margin-top:16px">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <h3>OWASP Top 10 Coverage</h3>
+            <div style="display:flex;gap:6px" id="owasp-version-toggle">
+              <button class="filter-tab active" data-ver="2025" id="btn-owasp-2025">2025</button>
+              <button class="filter-tab" data-ver="2021" id="btn-owasp-2021">2021</button>
+            </div>
+          </div>
+          <div id="owasp-chart"></div>
+        </div>
+
+        <!-- Severity Summary Strip -->
+        <div class="severity-strip" id="severity-strip" style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap">
+        </div>
+
+        <!-- Findings List -->
+        <div class="card" style="margin-top:16px">
+          <div class="card-header" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px">
+            <h3>Findings <span id="findings-count" style="color:var(--text-muted);font-weight:400"></span></h3>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button class="btn btn-secondary btn-sm" id="btn-expand-all">Expand All</button>
+              <button class="btn btn-secondary btn-sm" id="btn-collapse-all">Collapse All</button>
+            </div>
+          </div>
+
+          <!-- Interactive Filter Toolbar -->
+          <div class="findings-toolbar" style="margin:16px 0;display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap" id="findings-tabs">
+              <button class="filter-tab active" data-sev="all">ALL <span id="tab-count-all" class="tab-badge">0</span></button>
+              <button class="filter-tab tab-critical" data-sev="critical">CRITICAL <span id="tab-count-critical" class="tab-badge">0</span></button>
+              <button class="filter-tab tab-high" data-sev="high">HIGH <span id="tab-count-high" class="tab-badge">0</span></button>
+              <button class="filter-tab tab-medium" data-sev="medium">MEDIUM <span id="tab-count-medium" class="tab-badge">0</span></button>
+              <button class="filter-tab tab-low" data-sev="low">LOW <span id="tab-count-low" class="tab-badge">0</span></button>
+              <button class="filter-tab tab-info" data-sev="info">INFO <span id="tab-count-info" class="tab-badge">0</span></button>
+            </div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+              <div class="form-group" style="margin:0;flex:1;min-width:200px">
+                <input type="text" id="findings-search" placeholder="Search findings by title, CVE, location, or keyword..." style="width:100%;padding:10px 14px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:13px;font-family:inherit">
+              </div>
+              <select id="findings-sort" style="padding:8px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:12px;font-family:inherit;cursor:pointer">
+                <option value="severity">Sort: Severity</option>
+                <option value="cvss">Sort: CVSS Score</option>
+                <option value="location">Sort: Location</option>
+              </select>
+              <select id="findings-group" style="padding:8px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:12px;font-family:inherit;cursor:pointer">
+                <option value="none">Group: None</option>
+                <option value="owasp">Group: OWASP Category</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="findings-list"></div>
+        </div>
+
+        <!-- Active Execution Log / Probes Audit Trail -->
+        <div class="card" style="margin-top:16px" id="active-probes-card">
+          <div class="card-header">
+            <h3>Active Probe Execution Log <span id="active-probes-count" style="color:var(--text-muted);font-weight:400"></span></h3>
+          </div>
+          <div id="active-probes-list"></div>
+        </div>
+      </section>
+
+      <!-- ── AI Analysis ──────────────────────── -->
+      <section id="page-ai-analysis" class="page-section hidden ai-section">
+        <div class="page-header">
+          <h1>AI Analysis</h1>
+          <p>Powered by Gemini API</p>
+        </div>
+        <div class="card">
+          <div class="form-group">
+            <label for="ai-scan-selector">Select Scan to Analyze</label>
+            <select id="ai-scan-selector" style="width:100%;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:14px;">
+              <option value="">-- Select a completed scan --</option>
+            </select>
+          </div>
+          
+          <div style="display:flex; gap:12px; margin-top:16px; flex-wrap:wrap">
+            <button class="btn btn-secondary ai-action-btn" id="btn-ai-exec-summary">Executive Summary</button>
+            <button class="btn btn-secondary ai-action-btn" id="btn-ai-prioritize">Prioritize Fixes</button>
+            <button class="btn btn-secondary ai-action-btn" id="btn-ai-owasp">OWASP Analysis</button>
+          </div>
+          
+          <div id="ai-response-container" class="ai-response-area hidden" style="margin-top: 24px;">
+            <div id="ai-loading-indicator" class="ai-loading hidden">Thinking<span class="dots">...</span></div>
+            <div id="ai-response-content" style="white-space: pre-wrap; font-family: 'Inter', sans-serif; line-height: 1.6;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Rules ──────────────────────────── -->
+      <section id="page-rules" class="page-section hidden">
+        <div class="page-header">
+          <h1>Detection Rules</h1>
+          <p>Active scan rules and imported signatures</p>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3 id="rules-count">Rules</h3>
+            <button class="btn btn-secondary btn-sm" id="btn-reload-rules">↻ Reload</button>
+          </div>
+          <div class="table-wrapper" id="rules-table"></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

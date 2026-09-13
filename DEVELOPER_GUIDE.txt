@@ -1,0 +1,259 @@
+================================================================================
+                    MAPPER VULNERABILITY SCANNER — DEVELOPER GUIDE
+================================================================================
+
+1. EXECUTIVE SUMMARY & ARCHITECTURE MODEL
+--------------------------------------------------------------------------------
+Mapper is a high-performance, asynchronous web application vulnerability scanner 
+designed for automated passive security analysis and active payload probing. 
+It converts complex security telemetry into actionable risk metrics, CVSS v3.1 
+scores, OWASP Top 10 coverage breakdowns, and execution audit trails.
+
+Architecture Model:
+- Architecture Pattern: Micro-modular REST Backend + Single-Page Application (SPA) Frontend.
+- Concurrency Model: Fully asynchronous non-blocking execution using Python asyncio 
+  and aiohttp, utilizing parallelized gather tasks for multi-fold speedups.
+- Design Aesthetic: "WatchLogs Cyber Black & White" theme — high-contrast pitch black 
+  backgrounds, crisp white typography, Space Mono/JetBrains Mono fonts, and border-driven 
+  monochrome UI components.
+- Default Port Configuration: Backend Flask API (Port 5001), Frontend Web Dashboard (Port 8081).
+- Authentication: JWT Token-based authentication with PBKDF2:SHA256 password hashing.
+
+--------------------------------------------------------------------------------
+2. CORE TECHNOLOGIES & TOOLS USED
+--------------------------------------------------------------------------------
+Backend / Security Engine:
+- Python 3.10+
+- Flask & Flask-CORS: REST API server and cross-origin resource sharing handlers.
+- aiohttp: Asynchronous HTTP request engine with custom timeouts and TLS configuration.
+- BeautifulSoup4 (bs4): HTML parsing and attack surface parameter/form extraction.
+- PyJWT & Werkzeug: User authentication, password hashing (PBKDF2:SHA256), and token verification.
+- PyYAML: Nuclei community template parsing.
+- Elasticsearch (Optional): Historical scan result persistence (defaults to in-memory store).
+
+Frontend / UI Dashboard:
+- HTML5 / Vanilla JavaScript (ES6+): Single-page application logic with zero framework overhead.
+- CSS3: Custom design system implementing the WatchLogs Cyber Black & White aesthetic.
+
+Rules & Vulnerability Intelligence:
+- Nuclei Community Templates (YAML format)
+- Wappalyzer Technology Fingerprints
+- Custom JSON Signature Detection & Correlation Rules
+- NVD CVE Intelligence Database (safe software version database)
+
+--------------------------------------------------------------------------------
+3. FILE-BY-FILE DIRECTORY & CODE STRUCTURE
+--------------------------------------------------------------------------------
+
+ROOT DIRECTORY
+--------------
+- TESTING_GUIDE.md
+  Comprehensive automated and manual testing instructions for verifying scan 
+  execution, active probing, and API endpoints.
+
+- "mapper as systemS" & "mapperui as systemS"
+  Systemd service unit file templates used to run the Mapper backend (port 5001) 
+  and frontend HTTP server (port 8081) as persistent background daemons on Linux.
+
+- DEVELOPER_GUIDE.txt
+  This file. Full technical blueprint, file inventory, and architectural guide.
+
+
+BACKEND CORE (`backend/`)
+------------------------
+- backend/app.py
+  Flask API entry point. Defines application endpoints including:
+    - `/api/auth/*` (Login, Register, Verify, Change Password)
+    - `/api/scan` (Submit new scan job with passive/light_active/full_active options)
+    - `/api/scan/<id>` (Poll scan job status and progress percentage)
+    - `/api/scan/<id>/report` (Retrieve full scan report with risk scores & findings)
+    - `/api/scan/<id>/export` (Download standalone HTML or JSON audit report)
+    - `/api/rules` (Inspect loaded detection rule database)
+
+- backend/auth.py
+  User Authentication Subsystem. Manages JWT issuance and verification, password 
+  hashing with bcrypt, user registration, and JSON credential storage (`users.json`).
+
+- backend/config.py
+  Global Configuration Module. Loads environment variables, default HTTP timeouts, 
+  JWT secrets, maximum active probe limits per target, and Elasticsearch credentials.
+
+- backend/requirements.txt
+  List of Python package dependencies (Flask, aiohttp, PyJWT, bcrypt, bs4, etc.).
+
+- backend/users.json
+  Local storage file for registered user credentials and administrative access accounts.
+
+
+SCAN ENGINE (`backend/scanner/`)
+--------------------------------
+- backend/scanner/orchestrator.py
+  Scan Orchestrator (`ScanOrchestrator`). Controls the multi-stage asynchronous 
+  scanning pipeline:
+    Stage 1: Fetch target URL
+    Stage 2: Normalize HTTP response
+    Stage 3: Deep scan common path checks (.git, .env, robots.txt)
+    Stage 4: Pattern signature matching
+    Stage 5: Header security checks
+    Stage 6: Cookie security checks & extended OWASP checks
+    Stage 7: Attack surface parameter extraction
+    Stage 8: Parallel active probing (XSS, SQLi, LFI, CRLF)
+    Stage 9: TLS / SSL certificate checks
+    Stage 10: Finding correlation & deduplication
+    Stage 11: Risk score calculation & CVSS enrichment
+
+- backend/scanner/fetcher.py
+  Asynchronous HTTP Engine (`Fetcher`). Wraps `aiohttp.ClientSession` to perform fast 
+  HTTP GET/POST requests with per-request timeouts (3s–4s), custom user-agent strings, 
+  and SSL verification controls to handle self-signed target certificates.
+
+- backend/scanner/normalizer.py
+  HTTP Response Normalizer (`Normalizer`). Converts raw HTTP response objects into 
+  a `NormalizedSnapshot` data model containing status code, headers, parsed DOM, 
+  extracted scripts/links, and technology hints.
+
+- backend/scanner/surface_extractor.py
+  Attack Surface Discovery (`extract_surface`). Parses HTML forms, URL query params, 
+  and input fields to build an `AttackSurface` target map. Includes a synthetic 
+  fallback parameter injector (`id`, `page`, `q`, `search`) to guarantee an active 
+  attack surface when targets present static landing pages.
+
+- backend/scanner/active_checks.py
+  Active Probing Engine (`run_active_probes`). Concurrently dispatches non-destructive 
+  exploit payloads against discovered parameter targets:
+    - Reflected XSS Canary: Injects unique HTML canary strings and checks for unescaped reflection.
+    - Error-Based SQLi: Appends single quotes and checks for database error signatures.
+    - Path Traversal LFI: Tests file inclusion payloads against file-like parameters.
+    - CRLF Header Injection: Injects carriage returns to test HTTP header injection.
+  Returns detected findings along with an `active_probes_log` array containing complete 
+  request/response execution audit trails.
+
+- backend/scanner/passive_checks.py
+  Extended Passive Checks (`run_extended_checks`). Evaluates HTTP headers and HTML 
+  response structures against OWASP Top 10 guidelines (Missing CSP, HSTS, X-Frame-Options, 
+  Cookie security flags, Information Disclosure).
+
+- backend/scanner/matcher.py
+  Pattern Signature Matcher (`PatternMatcher`). Evaluates loaded JSON and Nuclei rules 
+  against `NormalizedSnapshot` data using regular expressions and header/body conditions.
+
+
+RULE & ANALYTICS ENGINE (`backend/engine/`)
+-------------------------------------------
+- backend/engine/rule_engine.py
+
+  Rule Loader & Compiler. Loads custom JSON scan rules and imported Nuclei templates, 
+  compiling regex patterns into fast in-memory `Rule` objects.
+
+- backend/engine/cvss_enricher.py
+  CVSS v3.1 Enrichment Engine (`enrich_cvss`). Computes CVSS base scores, vector strings, 
+  and severity classifications (Critical, High, Medium, Low, Info) for each finding.
+
+- backend/engine/risk_scorer.py
+  Risk Assessment Engine (`RiskScorer`). Calculates overall target risk score (0–100), 
+  assigns letter grade ratings (A+ through F), computes severity breakdowns, and 
+  ranks top priority remediation fixes by risk reduction potential.
+
+- backend/engine/correlator.py
+  Finding Correlation Engine (`Correlator`). Merges duplicate or overlapping findings 
+  originating from multiple scanner tools/stages to present a clean findings list.
+
+
+ENRICHMENT & IMPORTERS (`backend/enrichment/`, `backend/importers/`)
+--------------------------------------------------------------------
+- backend/enrichment/cve_enricher.py
+  CVE Intelligence Enricher (`CVEEnricher`). Matches detected software versions and 
+  technologies against reference security databases (`data/safe_versions.json`) to identify 
+  known CVE vulnerabilities.
+
+- backend/importers/nuclei_importer.py
+  Nuclei Template Importer (`NucleiImporter`). Parses official ProjectDiscovery Nuclei 
+  YAML templates into native Mapper detection rules.
+
+- backend/importers/wappalyzer_importer.py
+  Technology Fingerprinting Importer. Maps HTTP headers, cookies, and HTML signatures 
+  to identify CMS platforms, web servers, and JavaScript frameworks.
+
+
+EXPORT & PERSISTENCE (`backend/export/`, `backend/storage/`)
+------------------------------------------------------------
+- backend/export/report_exporter.py
+  Report Export Generator (`generate_html_report`). Produces self-contained, standalone 
+  HTML and JSON vulnerability audit reports featuring target summary, risk gauge, 
+  OWASP distribution charts, findings tables, and full active probe execution logs.
+
+- backend/storage/__init__.py
+  Storage Abstraction Layer. Handles document indexing and query operations for optional 
+  Elasticsearch persistence.
+
+
+FRONTEND WEB DASHBOARD (`frontend/`)
+-----------------------------------
+- frontend/index.html
+  Single-Page Application HTML Structure. Contains layout containers for Navigation, 
+  Dashboard Statistics, New Scan Submission Form, Scan Progress Bar, All Scans Table, 
+  Detection Rules Browser, and Detailed Scan Report View.
+
+- frontend/app.js
+  Frontend Application Controller (`App`). Manages JWT authentication state, API 
+  communication, real-time scan polling, SVG risk gauge rendering, severity filters, 
+  active probe audit log rendering, and HTML/JSON report exports.
+
+- frontend/style.css
+  WatchLogs Cyber Black & White Design System. Defines global theme variables, monochrome 
+  color palette (`#000000` pitch black background, charcoal surfaces, white text), Space Mono 
+  and JetBrains Mono typography, custom badge badges, and responsive CSS grid components.
+
+
+RULES & DATA (`rules/`, `data/`)
+--------------------------------
+- rules/scan_rules.json
+  Curated collection of passive and active vulnerability detection rules.
+
+- rules/correlation_rules.json
+  Deduplication and finding correlation rule definitions.
+
+- data/safe_versions.json
+  Reference database of safe component versions used for CVE vulnerability matching.
+
+- data/nuclei-templates/
+  Local repository cache of community Nuclei YAML templates.
+
+--------------------------------------------------------------------------------
+4. KEY FUNCTIONALITIES & OPERATIONAL FLOW
+--------------------------------------------------------------------------------
+
+1. Scan Mode Selection:
+   - Passive Mode: Safe, non-intrusive analysis of headers, body content, tech stack, 
+     and security cookies without issuing additional requests to the target.
+   - Light Active Mode: Executes passive checks plus rapid XSS Canary and Error-Based 
+     SQL Injection probes against parameters.
+   - Full Active Mode: Performs deep path discovery (`/.git`, `/.env`, `/robots.txt`), 
+     XSS, SQLi, LFI, and CRLF injection probes.
+
+2. Concurrent Asynchronous Probing:
+   - All sensitive path discovery and parameter probes execute concurrently using 
+     `asyncio.gather()` with explicit per-request timeouts (3s for active probes, 4s 
+     for path discovery). This guarantees deep scans complete in under 5–10 seconds.
+
+3. Attack Surface Discovery & Synthetic Fallback:
+   - Mapper automatically extracts input parameters from DOM forms, URL query strings, 
+     and links. When targets present static landing pages with no parameters, synthetic 
+     parameters (`id`, `page`, `q`, `search`) are automatically injected to ensure 
+     active probes run effectively.
+
+4. Active Execution Audit Trail:
+   - Every active probe attempted produces a transparent execution log entry in the UI 
+     and exported reports showing:
+     - Target Parameter Name
+     - Probe Type (XSS, SQLi, LFI, CRLF)
+     - Full Probe URL with Injected Payload
+     - HTTP Response Status Code
+     - Detailed Verification Result (Unescaped Reflection / Error Signature / Safe)
+
+5. WatchLogs Cyber Black & White UI:
+   - High-contrast terminal aesthetic with pitch black background, crisp white typography, 
+     animated risk score gauge, interactive severity filters, real-time progress bars, 
+     and single-click HTML/JSON report exporting.
+
+================================================================================

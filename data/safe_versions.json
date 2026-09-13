@@ -1,0 +1,19 @@
+{
+    "jquery": {"min_safe": "3.5.0", "cves_below": {"3.5.0": ["CVE-2020-11022", "CVE-2020-11023"], "3.4.0": ["CVE-2019-11358"]}},
+    "bootstrap": {"min_safe": "5.3.0", "cves_below": {"4.3.1": ["CVE-2019-8331"], "3.4.0": ["CVE-2018-14040", "CVE-2018-14042"]}},
+    "angular": {"min_safe": "1.8.0", "cves_below": {"1.6.0": ["CVE-2022-25844"]}},
+    "angularjs": {"min_safe": "1.8.0", "cves_below": {"1.6.0": ["CVE-2022-25844"]}},
+    "react": {"min_safe": "18.0.0"},
+    "vue.js": {"min_safe": "3.3.0"},
+    "wordpress": {"min_safe": "6.4.0"},
+    "drupal": {"min_safe": "10.0.0"},
+    "joomla": {"min_safe": "5.0.0"},
+    "php": {"min_safe": "8.2.0"},
+    "lodash": {"min_safe": "4.17.21", "cves_below": {"4.17.20": ["CVE-2021-23337", "CVE-2020-28500"]}},
+    "moment.js": {"min_safe": "2.29.4", "cves_below": {"2.29.3": ["CVE-2022-31129"]}},
+    "express": {"min_safe": "4.18.0"},
+    "nginx": {"min_safe": "1.25.0"},
+    "apache": {"min_safe": "2.4.58"},
+    "openssh": {"min_safe": "9.5"},
+    "openssl": {"min_safe": "3.2.0"}
+}

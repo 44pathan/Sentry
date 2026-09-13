@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SENTRY — Settings</title>
+    <link rel="stylesheet" href="../shared/theme.css">
+    <link rel="stylesheet" href="options.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>SENTRY — Settings</h1>
+            <a href="../dashboard/dashboard.html" class="back-link">&larr; Back to Dashboard</a>
+        </header>
+
+        <main>
+            <!-- Connection Settings -->
+            <section class="card">
+                <h2>Connection Settings</h2>
+                
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <label for="backend-url">Backend URL</label>
+                        <p class="text-muted">The URL of your Sentry backend server.</p>
+                    </div>
+                    <div class="setting-control">
+                        <input type="text" id="backend-url" class="text-input" placeholder="http://127.0.0.1:5001" value="http://127.0.0.1:5001">
+                    </div>
+                </div>
+
+                <div class="setting-row flex-end">
+                    <div class="status-indicator" id="connection-status">
+                        <span class="dot red"></span>
+                        <span class="status-text">Disconnected</span>
+                    </div>
+                    <button id="test-connection-btn" class="btn primary-btn">Test Connection</button>
+                </div>
+                
+                <div id="backend-details" class="details-panel hidden">
+                    <p class="success-text">Connection successful!</p>
+                    <div class="details-grid">
+                        <div class="detail-item">
+                            <span class="detail-label">Rules Loaded:</span>
+                            <span id="rules-count" class="detail-value">-</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Elasticsearch:</span>
+                            <span id="es-status" class="detail-value">-</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- AI Status (read-only — managed server-side) -->
+            <section class="card">
+                <h2>AI Analysis</h2>
+                
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <label>AI Status</label>
+                        <p class="text-muted">AI analysis is powered by Gemini and managed server-side. No configuration needed.</p>
+                    </div>
+                    <div class="setting-control">
+                        <div class="status-indicator" id="ai-status">
+                            <span class="dot red"></span>
+                            <span class="status-text">Checking...</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="model-info">
+                    <span class="ai-badge" id="ai-model-badge">Powered by Gemini</span>
+                </div>
+            </section>
+
+            <!-- Scan Defaults -->
+            <section class="card">
+                <h2>Scan Defaults</h2>
+                
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <label for="default-scan-mode">Default Scan Mode</label>
+                        <p class="text-muted">The default intensity of vulnerability scanning.</p>
+                    </div>
+                    <div class="setting-control">
+                        <select id="default-scan-mode" class="select-input">
+                            <option value="passive">Passive (No traffic generated)</option>
+                            <option value="light-active">Light Active (Safe payloads only)</option>
+                            <option value="full-active">Full Active (Intrusive)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <label for="rate-limit">Default Rate Limit (req/sec)</label>
+                        <p class="text-muted">Maximum requests per second for active scans.</p>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" id="rate-limit" class="number-input" min="1" max="100" value="10">
+                    </div>
+                </div>
+                
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <label for="auto-scan">Auto-Scan on Popup Open</label>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="auto-scan">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Notifications -->
+            <section class="card">
+                <h2>Notifications</h2>
+                
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <label for="notify-completion">Notify on Scan Completion</label>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="notify-completion" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <label for="show-badge">Show Risk Badge on Extension Icon</label>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="show-badge" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Authentication -->
+            <section class="card" id="auth-section">
+                <h2>Authentication</h2>
+                
+                <!-- Logged In View -->
+                <div id="auth-logged-in" class="hidden">
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <span class="detail-label">Current User:</span>
+                            <span id="current-username" class="user-display">user@example.com</span>
+                        </div>
+                        <div class="setting-control">
+                            <button id="logout-btn" class="btn danger-btn">Logout</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logged Out View -->
+                <div id="auth-logged-out">
+                    <form id="login-form" class="auth-form">
+                        <div class="form-group">
+                            <label for="login-username">Username</label>
+                            <input type="text" id="login-username" class="text-input" placeholder="admin">
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password">Password</label>
+                            <input type="password" id="login-password" class="text-input" placeholder="••••••••">
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn primary-btn w-full">Login</button>
+                        </div>
+                        <p id="login-error" class="error-text hidden">Authentication failed.</p>
+                    </form>
+                </div>
+            </section>
+
+            <!-- About -->
+            <section class="card about-card">
+                <h2>About SENTRY</h2>
+                <div class="about-content">
+                    <p class="version">Version <span id="extension-version">1.0.0</span></p>
+                    <p class="tagline">AI-Powered Vulnerability Scanner</p>
+                    <div class="about-links">
+                        <a href="#" class="external-link">Documentation</a>
+                        <span class="separator">•</span>
+                        <a href="https://github.com/halalhacker/sentry" target="_blank" class="external-link">GitHub Repository</a>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <script type="module" src="options.js"></script>
+</body>
+</html>

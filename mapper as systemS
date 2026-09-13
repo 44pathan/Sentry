@@ -1,0 +1,33 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════
+# Mapper Backend — systemd service setup
+# Port: 5001
+# ═══════════════════════════════════════════════════════════
+
+sudo tee /etc/systemd/system/mapper.service > /dev/null <<EOF
+[Unit]
+Description=Mapper Vulnerability Scanner Backend
+After=network.target elasticsearch.service
+
+[Service]
+User=halalhacker
+WorkingDirectory=/home/halalhacker/mapper/backend
+ExecStart=/home/halalhacker/venv/bin/python3 app.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Kill any existing process on port 5001
+kill $(lsof -ti:5001) 2>/dev/null
+
+# Enable and start the service
+sudo systemctl daemon-reload
+sudo systemctl enable mapper
+sudo systemctl start mapper
+
+# Verify it's running
+sudo systemctl status mapper

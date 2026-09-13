@@ -1,0 +1,38 @@
+[
+  {
+    "id": "MULTIPLE_MISCONFIGS",
+    "name": "Systemic Misconfiguration",
+    "description": "Multiple security misconfigurations detected, indicating a lack of security hardening.",
+    "enabled": true,
+    "rule_type": "threshold",
+    "match_category": "A05:2021-Security Misconfiguration",
+    "threshold": 5,
+    "severity": "high",
+    "owasp_category": "A05:2021-Security Misconfiguration",
+    "cwe": "CWE-16"
+  },
+  {
+    "id": "CRITICAL_VULN_FOUND",
+    "name": "Critical Vulnerability Detected",
+    "description": "A critical severity vulnerability was found during the scan.",
+    "enabled": true,
+    "rule_type": "threshold",
+    "match_severity": "critical",
+    "threshold": 1,
+    "severity": "critical",
+    "owasp_category": "",
+    "cwe": ""
+  },
+  {
+    "id": "OUTDATED_COMPONENTS",
+    "name": "Multiple Outdated Components",
+    "description": "Multiple outdated software components detected, increasing the attack surface.",
+    "enabled": true,
+    "rule_type": "threshold",
+    "match_category": "A06:2021-Vulnerable Components",
+    "threshold": 3,
+    "severity": "high",
+    "owasp_category": "A06:2021-Vulnerable Components",
+    "cwe": "CWE-1104"
+  }
+]

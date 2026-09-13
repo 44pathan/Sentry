@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sentry AI Side Panel</title>
+  <link rel="stylesheet" href="../shared/theme.css">
+  <link rel="stylesheet" href="sidepanel.css">
+  <style>
+    .btn-delete {
+        background: transparent;
+        border: 1px solid rgba(255, 59, 59, 0.3);
+        color: #ff3b3b;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 11px;
+    }
+    .btn-delete:hover {
+        background: rgba(255, 59, 59, 0.15);
+    }
+    .btn-download {
+        background: transparent;
+        border: 1px solid rgba(76, 175, 80, 0.3);
+        color: #4caf50;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 10px;
+        font-weight: 700;
+    }
+    .btn-download:hover {
+        background: rgba(76, 175, 80, 0.15);
+    }
+    .scan-actions {
+        display: flex;
+        gap: 4px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="panel-tabs">
+    <button class="tab-btn active" data-tab="ai-analysis">AI Analysis</button>
+    <button class="tab-btn" data-tab="live-scans">Live Scans</button>
+  </div>
+
+  <div id="ai-analysis-tab" class="tab-content active">
+    <div id="ai-setup-banner" class="ai-setup-banner hidden">
+      <span>AI analysis is not available — backend needs GEMINI_API_KEY configured.</span>
+    </div>
+
+    <div class="context-header">
+      <select id="context-selector" class="context-selector">
+        <option value="">Select a scan to analyze...</option>
+      </select>
+    </div>
+
+    <div class="quick-actions">
+      <button class="btn-action" id="btn-exec-summary">Executive Summary</button>
+      <button class="btn-action" id="btn-prioritize">Prioritize Fixes</button>
+      <button class="btn-action" id="btn-owasp">OWASP Analysis</button>
+    </div>
+
+    <div id="chat-area" class="chat-area">
+      <!-- Chat messages will appear here -->
+    </div>
+
+    <div class="chat-input-area">
+      <textarea id="chat-input" placeholder="Ask about vulnerabilities, fixes, security best practices..." rows="1"></textarea>
+      <button id="btn-send" class="btn-send">Send</button>
+    </div>
+  </div>
+
+  <div id="live-scans-tab" class="tab-content">
+    <div id="scan-list" class="scan-list">
+      <!-- Live scans will be listed here -->
+    </div>
+  </div>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
