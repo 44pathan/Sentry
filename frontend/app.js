@@ -1,5 +1,5 @@
 /**
- * app.js — Mapper Vulnerability Scanner Frontend
+ * app.js — Sentry Vulnerability Scanner Frontend
  * API client, auth flow, scan management, and dynamic rendering.
  * Includes: CVSS scores, mitigation strategies, vulnerability summary,
  *           risk formula display, and JSON/HTML export.
@@ -37,8 +37,8 @@ const App = {
 
   // ── Init ──────────────────────────────────────────
   init() {
-    this.token = localStorage.getItem("mapper_token");
-    this.username = localStorage.getItem("mapper_user");
+    this.token = localStorage.getItem("sentry_token");
+    this.username = localStorage.getItem("sentry_user");
 
     if (this.token) {
       this.verifyToken();
@@ -110,8 +110,8 @@ const App = {
       const res = await this.api("POST", "/auth/login", { username: user, password: pass }, false);
       this.token = res.token;
       this.username = res.username;
-      localStorage.setItem("mapper_token", res.token);
-      localStorage.setItem("mapper_user", res.username);
+      localStorage.setItem("sentry_token", res.token);
+      localStorage.setItem("sentry_user", res.username);
       this.showApp();
     } catch (err) {
       alert.textContent = err.message || "Login failed";
@@ -129,7 +129,7 @@ const App = {
       this.showApp();
     } catch {
       this.token = null;
-      localStorage.removeItem("mapper_token");
+      localStorage.removeItem("sentry_token");
       this.showLogin();
     }
   },
@@ -138,8 +138,8 @@ const App = {
     try { await this.api("POST", "/auth/logout"); } catch {}
     this.token = null;
     this.username = null;
-    localStorage.removeItem("mapper_token");
-    localStorage.removeItem("mapper_user");
+    localStorage.removeItem("sentry_token");
+    localStorage.removeItem("sentry_user");
     Object.values(this.pollTimers).forEach(clearInterval);
     this.pollTimers = {};
     this.showLogin();
@@ -155,6 +155,13 @@ const App = {
     document.getElementById("app-page").classList.remove("hidden");
     document.getElementById("user-display").textContent = this.username;
     document.getElementById("user-avatar").textContent = (this.username || "U")[0].toUpperCase();
+    // Load AI provider info and update UI label
+    this.api("GET", "/ai/status", null, false).then(s => {
+      const providerLabel = s.provider === 'groq' ? '⚡ Groq' : s.provider === 'gemini' ? '✦ Gemini' : '🤖 OpenAI';
+      const modelShort = (s.model || '').split('/').pop();
+      const el = document.getElementById('ai-provider-badge');
+      if (el) el.textContent = `${providerLabel} · ${modelShort}`;
+    }).catch(() => {});
     this.navigate("dashboard");
   },
 
@@ -170,9 +177,20 @@ const App = {
     const navBtn = document.querySelector(`.nav-item[data-page="${page}"]`);
     if (navBtn) navBtn.classList.add("active");
 
+    // Show instant skeleton so the page never looks blank while data loads
+    if (page === "dashboard") {
+      const t = document.getElementById("recent-scans-table");
+      if (t && !t.children.length) t.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px">Loading…</td></tr>';
+    }
+    if (page === "scans") {
+      const t = document.getElementById("all-scans-table");
+      if (t && !t.children.length) t.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px">Loading…</td></tr>';
+    }
+
     if (page === "dashboard") this.loadDashboard();
     if (page === "scans") this.loadAllScans();
     if (page === "rules") this.loadRules();
+    if (page === "ai-analysis") this.populateAiScanSelector();
   },
 
   // ── API Client ────────────────────────────────────
@@ -225,9 +243,38 @@ const App = {
       `<div class="empty-state"><div class="icon">!</div><h3>Error</h3><p>${this.esc(err.message)}</p></div>`;
   },
 
+  _hasActiveScans: false,
+  startLiveUpdates() {
+    if (this._liveTimer) return;
+    this._liveTimer = setInterval(async () => {
+      // Only hit the server if we're on a data page AND there are active scans (or dashboard first load)
+      if (this.currentPage === "dashboard" && this._hasActiveScans) {
+        await this.loadDashboard(true);
+      } else if (this.currentPage === "scans" && this._hasActiveScans) {
+        await this.loadAllScans(true);
+      }
+    }, 5000);  // 5s instead of 2s — reduces API calls 60%, eliminates polling jank
+  },
+
+  stopLiveUpdates() {
+    if (this._liveTimer) {
+      clearInterval(this._liveTimer);
+      this._liveTimer = null;
+    }
+  },
+
   renderScansTable(containerId, scans, isRecent = false) {
     const container = document.getElementById(containerId);
     if (!container) return;
+
+    const hasRunning = scans.some(s => s.status !== 'completed' && s.status !== 'failed');
+    this._hasActiveScans = hasRunning;
+    if (hasRunning) {
+      this.startLiveUpdates();
+    } else {
+      this.stopLiveUpdates();
+    }
+
     if (!scans.length) {
       container.innerHTML = `<div class="empty-state"><div class="icon">i</div><h3>No scans yet</h3><p>Submit your first scan to get started.</p></div>`;
       return;
@@ -238,7 +285,7 @@ const App = {
     </tr></thead><tbody>`;
 
     for (const s of scans) {
-      const status = this.statusBadge(s.status);
+      const status = this.statusBadge(s);
       const risk = s.status === "completed" ? `<span style="font-weight:600">${s.risk_score}/100</span>` : "—";
       const date = s.created_at ? this.formatDate(s.created_at) : "—";
       const shortUrl = this.esc((s.target_url || "—").substring(0, 40));
@@ -271,17 +318,23 @@ const App = {
     }
   },
 
-  statusBadge(status) {
-    if (status === 'active_probing') return '<span class="badge badge-active">PROBING</span>';
-    const map = {
-      completed: "badge-success",
-      failed: "badge-critical",
-      queued: "badge-info",
-      fetching: "badge-medium",
-      analyzing: "badge-medium",
-      correlating: "badge-low",
+  statusBadge(scan) {
+    const status = typeof scan === 'object' ? scan.status : scan;
+    const progress = typeof scan === 'object' ? (scan.progress || 0) : 0;
+
+    if (status === 'completed') return '<span class="badge badge-success">COMPLETED</span>';
+    if (status === 'failed') return '<span class="badge badge-critical">FAILED</span>';
+
+    const labelMap = {
+      queued: "QUEUED",
+      fetching: "FETCHING",
+      analyzing: "ANALYZING",
+      active_probing: "PROBING",
+      correlating: "CORRELATING",
     };
-    return `<span class="badge ${map[status] || 'badge-info'}">${this.esc(status)}</span>`;
+    const label = labelMap[status] || status.toUpperCase();
+
+    return `<span class="badge badge-active" style="display:inline-flex;align-items:center;gap:4px;"><span class="spinner" style="width:10px;height:10px;border-width:2px;"></span> ${label} (${progress}%)</span>`;
   },
 
   // ── Submit Scan ───────────────────────────────────
@@ -555,10 +608,10 @@ const App = {
     if (!strip) return;
     const sevs = [
       { key: "critical", label: "CRITICAL", color: "#ff3b3b", bg: "rgba(255,59,59,0.12)" },
-      { key: "high", label: "HIGH", color: "#ffffff", bg: "rgba(255,255,255,0.08)" },
-      { key: "medium", label: "MEDIUM", color: "#e0e0e0", bg: "rgba(224,224,224,0.08)" },
-      { key: "low", label: "LOW", color: "#aaaaaa", bg: "rgba(170,170,170,0.08)" },
-      { key: "info", label: "INFO", color: "#888888", bg: "rgba(119,119,119,0.08)" },
+      { key: "high", label: "HIGH", color: "#ff8c42", bg: "rgba(255,140,66,0.12)" },
+      { key: "medium", label: "MEDIUM", color: "#eab308", bg: "rgba(234,179,8,0.12)" },
+      { key: "low", label: "LOW", color: "#22d3ee", bg: "rgba(34,211,238,0.12)" },
+      { key: "info", label: "INFO", color: "#a78bfa", bg: "rgba(167,139,250,0.12)" },
     ];
     strip.innerHTML = sevs.map(s => {
       const count = (breakdown || {})[s.key] || 0;
@@ -675,17 +728,39 @@ const App = {
         </div>
         ${f.evidence_snippet ? `<div class="evidence-block"><strong>Evidence / Snippet:</strong>\n${this.esc(f.evidence_snippet)}</div>` : ""}
         ${mitigation ? `<div class="evidence-block mitigation-block"><strong>Mitigation Strategy:</strong>\n${this.esc(mitigation)}</div>` : ""}
+        <div style="margin-top:12px;display:flex;gap:8px;">
+          <button class="btn btn-secondary btn-sm ai-action-btn" onclick="event.stopPropagation();App.runFindingAi('${this.esc(f.id)}','explain')">Explain with AI</button>
+        </div>
+        <div id="ai-finding-${this.esc(f.id)}" class="ai-response-area hidden" style="margin-top:12px;"></div>
       </div>
     </div>`;
   },
 
   renderFindings(findings) {
     const container = document.getElementById("findings-list");
+    container.innerHTML = "";
     if (!findings.length) {
       container.innerHTML = '<div class="empty-state"><div class="icon">i</div><h3>No findings</h3><p>No vulnerabilities detected matching current filter or search criteria.</p></div>';
       return;
     }
-    container.innerHTML = findings.map(f => this._renderFindingCard(f)).join("");
+    // Render first 20 immediately (above the fold), then stream the rest in chunks
+    // so the main thread is never blocked for more than ~16ms at a time
+    const CHUNK = 20;
+    container.innerHTML = findings.slice(0, CHUNK).map(f => this._renderFindingCard(f)).join("");
+    if (findings.length > CHUNK) {
+      let i = CHUNK;
+      const renderChunk = () => {
+        if (i >= findings.length) return;
+        const frag = document.createDocumentFragment();
+        const tmp = document.createElement("div");
+        tmp.innerHTML = findings.slice(i, i + CHUNK).map(f => this._renderFindingCard(f)).join("");
+        while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+        container.appendChild(frag);
+        i += CHUNK;
+        requestAnimationFrame(renderChunk);
+      };
+      requestAnimationFrame(renderChunk);
+    }
   },
 
   renderFindingsGrouped(findings) {
@@ -837,6 +912,161 @@ const App = {
     const d = document.createElement("div");
     d.textContent = String(str);
     return d.innerHTML;
+  },
+
+  // ── AI Analysis ──────────────────────────────────
+  _aiSystemPrompt: `You are a defensive cybersecurity educator and application security consultant. Analyze scan results to provide clear remediation guidance. Format responses in markdown. Focus on defensive strategies and risk mitigation.`,
+
+  _parseMd(md) {
+    if (!md) return '';
+    return md
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/^- (.+)$/gm, '<li>$1</li>')
+      .replace(/\n{2,}/g, '</p><p>')
+      .replace(/\n/g, '<br>')
+      .replace(/^/, '<p>').replace(/$/, '</p>');
+  },
+
+  _compactReport(report) {
+    const r = report || {};
+    const findings = r.findings || [];
+    const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    findings.forEach(f => { counts[f.severity] = (counts[f.severity] || 0) + 1; });
+    const order = ['critical', 'high', 'medium', 'low', 'info'];
+    const sorted = [...findings].sort((a, b) => order.indexOf(a.severity) - order.indexOf(b.severity));
+    const top = sorted.slice(0, 15).map(f => ({
+      title: f.title, severity: f.severity, cvss: f.cvss_score || '',
+      owasp: f.owasp_category || '', cve: f.cve || '', location: f.evidence_location || '',
+    }));
+    // Use scan completion date; fall back to today
+    const rawDate = r.completed_at || r.created_at || new Date().toISOString();
+    const scanDate = new Date(rawDate).toLocaleDateString('en-GB', {
+      day: '2-digit', month: 'long', year: 'numeric'
+    });
+    return { target: r.target_url || '', scan_date: scanDate,
+      risk_score: r.risk_score || 0, risk_grade: r.risk_grade || '?',
+      total_findings: findings.length, severity_counts: counts, top_findings: top };
+  },
+
+  _buildPrompt(action, report) {
+    if (action === 'executive_summary') {
+      const compact = this._compactReport(report);
+      return `Generate an executive summary for this vulnerability scan:\n\n${JSON.stringify(compact, null, 2)}\n\nInclude:\n1. Non-technical overview for management.\n2. Key risk areas with business impact.\n3. Prioritized action items.\n4. Comparison against industry standards.`;
+    }
+    if (action === 'prioritize_fixes') {
+      const findings = (report.findings || []).slice(0, 15).map(f => ({
+        title: f.title, severity: f.severity, cvss: f.cvss_score || '',
+        owasp: f.owasp_category || '', remediation: (f.remediation || '').slice(0, 80),
+      }));
+      return `Create a prioritized remediation plan.\n\nRisk Score: ${report.risk_score || 0}/100\nTop Findings:\n${JSON.stringify(findings, null, 2)}\n\nProvide:\n1. Ordered remediation plan (fix first → fix later).\n2. Effort per fix (Low/Medium/High).\n3. Expected risk reduction per fix.\n4. Quick wins vs long-term improvements.`;
+    }
+    if (action === 'owasp_analysis') {
+      return `Analyze the OWASP Top 10 coverage:\n\n${JSON.stringify(report.owasp_coverage || report.owasp_2025_coverage || {}, null, 2)}\n\nInclude:\n1. Current coverage assessment against OWASP Top 10.\n2. Coverage gaps and missed categories.\n3. Recommendations for improving security testing.`;
+    }
+    return '';
+  },
+
+  _buildFindingPrompt(finding, type) {
+    const f = {
+      title: finding.title, severity: finding.severity,
+      description: (finding.description || '').slice(0, 200),
+      cvss: finding.cvss_score || '', cve: finding.cve || '', cwe: finding.cwe || '',
+      evidence: (finding.evidence_snippet || '').slice(0, 100),
+      location: finding.evidence_location || '',
+    };
+    if (type === 'explain') {
+      return `Explain this vulnerability finding:\n${JSON.stringify(f, null, 2)}\n\nProvide:\n1. What the vulnerability is in plain English.\n2. Real-world impact and attack scenarios.\n3. Step-by-step remediation with code examples.\n4. CVSS severity justification.`;
+    }
+    return `Perform a detailed technical analysis on this finding:\n${JSON.stringify(f, null, 2)}\n\nInclude:\n1. Attack vector analysis.\n2. Exploitation difficulty and prerequisites.\n3. Potential for chaining with other vulnerabilities.\n4. Defense-in-depth recommendations.`;
+  },
+
+  async _aiCall(prompt) {
+    const res = await this.api("POST", "/ai/analyze", {
+      prompt,
+      systemPrompt: this._aiSystemPrompt,
+      temperature: 0.7,
+      maxTokens: 4096,
+    });
+    if (res.error) throw new Error(res.error);
+    return res.text || '';
+  },
+
+  async populateAiScanSelector() {
+    const selector = document.getElementById('ai-scan-selector');
+    if (!selector) return;
+    try {
+      const data = await this.api('GET', '/scans');
+      const completed = (data.scans || []).filter(s => s.status === 'completed');
+      let html = '<option value="">-- Select a completed scan --</option>';
+      completed.forEach(s => {
+        const date = this.formatDate(s.created_at);
+        html += `<option value="${this.esc(s.scan_id)}">${this.esc(s.target_url)} (${date})</option>`;
+      });
+      selector.innerHTML = html;
+    } catch (err) {
+      console.error('Failed to load scans for AI selector:', err);
+    }
+  },
+
+  askAiReport() {
+    this.navigate('ai-analysis');
+    setTimeout(() => {
+      this.populateAiScanSelector().then(() => {
+        const sel = document.getElementById('ai-scan-selector');
+        if (sel && this._currentScanId) sel.value = this._currentScanId;
+        this.runAiAction('executive_summary');
+      });
+    }, 100);
+  },
+
+  async runAiAction(action) {
+    const scanId = document.getElementById('ai-scan-selector').value;
+    if (!scanId) { alert('Please select a scan first'); return; }
+
+    const container = document.getElementById('ai-response-container');
+    const content = document.getElementById('ai-response-content');
+    const loader = document.getElementById('ai-loading-indicator');
+
+    container.classList.remove('hidden');
+    content.innerHTML = '';
+    loader.classList.remove('hidden');
+
+    try {
+      const res = await this.api('GET', `/scan/${scanId}/report`);
+      const report = res.report;
+      const prompt = this._buildPrompt(action, report);
+      const result = await this._aiCall(prompt);
+      content.innerHTML = this._parseMd(result);
+    } catch (err) {
+      content.innerHTML = `<div class="alert alert-error" style="display:block">Error generating AI analysis: ${this.esc(err.message)}</div>`;
+    } finally {
+      loader.classList.add('hidden');
+    }
+  },
+
+  async runFindingAi(findingId, type) {
+    const finding = (this._currentFindings || []).find(f => f.id === findingId);
+    if (!finding) return;
+
+    const container = document.getElementById(`ai-finding-${findingId}`);
+    if (!container) return;
+
+    container.classList.remove('hidden');
+    container.innerHTML = '<div class="ai-loading">Thinking<span class="dots">...</span></div>';
+
+    try {
+      const prompt = this._buildFindingPrompt(finding, type);
+      const result = await this._aiCall(prompt);
+      container.innerHTML = this._parseMd(result);
+    } catch (err) {
+      container.innerHTML = `<div style="color:var(--critical)">Error: ${this.esc(err.message)}</div>`;
+    }
   },
 };
 

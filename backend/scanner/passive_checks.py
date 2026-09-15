@@ -266,29 +266,7 @@ def _check_logging_monitoring(snapshot, scan_id: str) -> list:
             ),
         ))
 
-    if not has_monitoring and has_auth_forms:
-        findings.append(Finding(
-            id=str(uuid.uuid4()), scan_id=scan_id,
-            target_url=snapshot.url, timestamp=now,
-            source_tool="custom", type="misconfiguration",
-            severity="low",
-            title="No Security Monitoring Headers Detected",
-            description=(
-                "The application has authentication forms but no request tracing or "
-                "monitoring headers were detected (X-Request-Id, Sentry-Trace, etc.). "
-                "This may indicate insufficient security logging and monitoring."
-            ),
-            owasp_category="A09:2021-Security Logging and Monitoring Failures",
-            cwe="CWE-778",
-            evidence_location="header",
-            evidence_snippet="No X-Request-Id, X-Correlation-Id, Sentry-Trace, or Datadog headers found",
-            remediation=(
-                "Implement structured security logging for all authentication events. "
-                "Add request tracing (X-Request-Id) for incident correlation. "
-                "Deploy monitoring tools (Sentry, Datadog, ELK stack) for real-time alerting."
-            ),
-        ))
-
+    # Heuristic monitoring check removed to avoid false positives on standard web pages
     return findings
 
 

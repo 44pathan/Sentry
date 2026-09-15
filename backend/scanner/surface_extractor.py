@@ -96,11 +96,12 @@ def extract_surface(snapshot, target_url: str, max_internal_links: int = 5) -> A
                 is_url_param=p_lower in URL_PARAM_NAMES,
             ))
 
-    # Deduplicate params by (url, param_name)
+    # Deduplicate params by (netloc, path, param_name, source) to avoid redundant active probes
     seen = set()
     deduped = []
     for p in params:
-        key = (p.url, p.param_name, p.source)
+        parsed_p = urlparse(p.url)
+        key = (parsed_p.netloc, parsed_p.path.rstrip('/'), p.param_name.lower(), p.source)
         if key not in seen:
             seen.add(key)
             deduped.append(p)
@@ -109,7 +110,7 @@ def extract_surface(snapshot, target_url: str, max_internal_links: int = 5) -> A
     surface.total_params = len(deduped)
 
     logger.info(
-        f"[Surface] Discovered {surface.total_params} params, "
+        f"[Surface] Discovered {surface.total_params} unique parameter targets, "
         f"{surface.total_forms} forms, {surface.total_links} internal links"
     )
 

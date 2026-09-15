@@ -176,10 +176,16 @@ async function checkAiStatus() {
         if (status.configured) {
             setIndicatorStatus(elements.aiStatus, 'green', 'Active');
             if (elements.aiModelBadge) {
-                elements.aiModelBadge.textContent = `Powered by ${status.model || 'Gemini'}`;
+                // Show correct provider name from backend
+                const providerName = status.provider === 'groq' ? '⚡ Groq'
+                    : status.provider === 'gemini' ? '✦ Gemini'
+                    : '🤖 OpenAI';
+                const modelShort = (status.model || '').split('/').pop() || status.model || '';
+                elements.aiModelBadge.textContent = `${providerName} · ${modelShort}`;
             }
         } else {
             setIndicatorStatus(elements.aiStatus, 'red', 'Not Available');
+            if (elements.aiModelBadge) elements.aiModelBadge.textContent = 'AI Not Configured';
         }
     } catch {
         setIndicatorStatus(elements.aiStatus, 'red', 'Unable to check');

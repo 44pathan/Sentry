@@ -135,7 +135,7 @@ class Normalizer:
     def _parse_html(self, html: str, snapshot: PageSnapshot):
         """Parse HTML and extract structured data."""
         try:
-            soup = BeautifulSoup(html, "html.parser")
+            soup = BeautifulSoup(html, "lxml")
         except Exception as e:
                 logger.warning(f"HTML parsing failed for {snapshot.url}: {e}")
                 return

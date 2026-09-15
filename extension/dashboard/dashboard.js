@@ -40,8 +40,8 @@ const App = {
   async init() {
     try {
       this.token = await getToken();
-      const data = await chrome.storage.local.get(["mapper_user"]);
-      this.username = data.mapper_user;
+      const data = await chrome.storage.local.get(["sentry_user"]);
+      this.username = data.sentry_user;
 
       if (this.token) {
         // verify
@@ -72,6 +72,13 @@ const App = {
     document.getElementById("login-banner").classList.add("hidden");
     document.getElementById("user-display").textContent = this.username;
     document.getElementById("user-avatar").textContent = (this.username || "U")[0].toUpperCase();
+    // Update AI provider badge dynamically
+    APIClient.request("/ai/status", "GET", null, false).then(s => {
+      const label = s.provider === 'groq' ? '⚡ Groq'
+        : '⚡ Groq';
+      const el = document.getElementById('ai-provider-badge');
+      if (el) el.textContent = label;
+    }).catch(() => {});
     this.navigate("dashboard");
   },
 
@@ -116,8 +123,9 @@ const App = {
     });
 
     // AI actions
-    document.getElementById('btn-ask-ai-report').addEventListener('click', () => {
+    document.getElementById('btn-ask-ai-report').addEventListener('click', async () => {
       this.navigate('ai-analysis');
+      await this.populateAiScanSelector();
       document.getElementById('ai-scan-selector').value = this._currentScanId;
       this.runAiAction('executive_summary');
     });
@@ -142,7 +150,7 @@ const App = {
     try { await APIClient.request("/auth/logout", "POST"); } catch {}
     this.token = null;
     this.username = null;
-    await chrome.storage.local.remove(["jwtToken", "mapper_user"]);
+    await chrome.storage.local.remove(["jwtToken", "sentry_user"]);
     Object.values(this.pollTimers).forEach(clearInterval);
     this.pollTimers = {};
     this.showUnauthenticated();

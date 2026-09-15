@@ -178,8 +178,17 @@ class RiskScorer:
 
         for f in findings:
             cat = f.get("owasp_category", "") if isinstance(f, dict) else getattr(f, "owasp_category", "")
+            if not cat:
+                continue
             if cat in owasp_categories:
                 owasp_categories[cat] += 1
+            else:
+                # Match by prefix (e.g. "A01", "A05")
+                prefix = cat[:3].upper()
+                for key in owasp_categories:
+                    if key.startswith(prefix):
+                        owasp_categories[key] += 1
+                        break
 
         return owasp_categories
 

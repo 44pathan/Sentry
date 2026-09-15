@@ -28,7 +28,8 @@
   --radius: 6px;
   --radius-sm: 4px;
   --shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
-  --transition: all 0.2s ease;
+  /* Specific properties only — 'transition: all' watches every CSS prop and kills perf */
+  --transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -379,10 +380,10 @@ body {
 }
 
 .badge-critical { background: #1a0000; color: #ff3b3b; border-color: #ff3b3b; }
-.badge-high { background: #1a1a1a; color: #ffffff; border-color: #ffffff; }
-.badge-medium { background: #181818; color: #e0e0e0; border-color: #666666; }
-.badge-low { background: #121212; color: #aaaaaa; border-color: #444444; }
-.badge-info { background: #0a0a0a; color: #888888; border-color: #333333; }
+.badge-high { background: rgba(255,140,66,0.1); color: #ff8c42; border-color: #ff8c42; }
+.badge-medium { background: rgba(234,179,8,0.1); color: #eab308; border-color: #eab308; }
+.badge-low { background: rgba(34,211,238,0.1); color: #22d3ee; border-color: #22d3ee; }
+.badge-info { background: rgba(167,139,250,0.1); color: #a78bfa; border-color: #a78bfa; }
 .badge-success { background: #001a00; color: #4caf50; border-color: #4caf50; }
 
 /* ── Table ────────────────────────────────────── */
@@ -413,7 +414,7 @@ table td {
   background: var(--bg-card);
 }
 
-table tr { transition: var(--transition); }
+table tr { transition: background-color 0.15s ease; }
 table tbody tr:hover td { background: var(--bg-card-hover); color: #ffffff; }
 
 table td:first-child { color: var(--text-primary); font-weight: 500; }
@@ -576,8 +577,10 @@ table td:first-child { color: var(--text-primary); font-weight: 500; }
   border-radius: var(--radius-sm);
   padding: 14px 18px;
   margin-bottom: 10px;
-  transition: var(--transition);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
   cursor: pointer;
+  content-visibility: auto;          /* skip paint for off-screen cards */
+  contain-intrinsic-size: 0 64px;    /* estimated collapsed height */
 }
 
 .finding-card:hover {
@@ -753,7 +756,7 @@ table td:first-child { color: var(--text-primary); font-weight: 500; }
 .hidden { display: none !important; }
 
 /* ── Page Sections ────────────────────────────── */
-.page-section { animation: fadeIn 0.3s ease-out; }
+.page-section { animation: fadeIn 0.15s ease-out; }
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
@@ -900,3 +903,77 @@ table td:first-child { color: var(--text-primary); font-weight: 500; }
 .mitigation-block strong {
   color: var(--success);
 }
+
+/* ── AI Analysis Styling ──────────────────────── */
+.ai-section {
+  position: relative;
+}
+
+.ai-action-btn {
+  background: rgba(147, 51, 234, 0.1) !important;
+  border: 1px solid rgba(147, 51, 234, 0.3) !important;
+  color: #c084fc !important;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.ai-action-btn:hover {
+  background: rgba(147, 51, 234, 0.2) !important;
+  border-color: #a855f7 !important;
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.3);
+  transform: translateY(-1px);
+}
+
+.ai-response-area {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(147, 51, 234, 0.2);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  min-height: 120px;
+  max-height: 600px;
+  overflow-y: auto;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
+}
+
+.ai-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #c084fc;
+  font-size: 14px;
+}
+
+.ai-loading .dots {
+  animation: pulse-dots 1.4s infinite ease-in-out;
+}
+
+@keyframes pulse-dots {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
+}
+
+.ai-markdown-content h1, .ai-markdown-content h2, .ai-markdown-content h3 {
+  color: #e9d5ff;
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.ai-markdown-content code {
+  background: rgba(0, 0, 0, 0.4);
+  color: #f472b6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9em;
+}
+
+.ai-markdown-content pre {
+  background: #090d16;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+

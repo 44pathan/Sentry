@@ -41,10 +41,9 @@ logger = logging.getLogger(__name__)
 
 
 # ═══ Blind SQLi Payloads ═════════════════════════════════════
+# Only test MySQL (most common DB). Testing all 3 serialises probes and triples scan time.
 BLIND_SQLI_PAYLOADS = [
     ("' OR SLEEP({sleep})-- ", "MySQL SLEEP"),
-    ("' OR pg_sleep({sleep})-- ", "PostgreSQL pg_sleep"),
-    ("'; WAITFOR DELAY '00:00:0{sleep}'-- ", "MSSQL WAITFOR"),
 ]
 
 
@@ -109,37 +108,51 @@ async def run_active_probes(
 
         is_post = (param.source == "form_post")
 
+        async def _safe_probe(coro):
+            """Run a single probe with a hard 10s wall-clock timeout."""
+            try:
+                return await asyncio.wait_for(coro, timeout=6)
+            except asyncio.TimeoutError:
+                logger.debug(f"[Active] Probe timed out on {param.param_name}")
+                return None, None
+            except Exception as e:
+                logger.debug(f"[Active] Probe error on {param.param_name}: {e}")
+                return None, None
+
         # Probe 1: XSS
-        res_finding, log_item = await _probe_xss(fetcher, param, scan_id, use_post=is_post)
+        res_finding, log_item = await _safe_probe(_probe_xss(fetcher, param, scan_id, use_post=is_post))
         if log_item: param_logs.append(log_item)
         if res_finding: param_findings.append(res_finding)
 
         # Probe 2: SQLi
-        res_finding, log_item = await _probe_sqli(fetcher, param, scan_id, use_post=is_post)
+        res_finding, log_item = await _safe_probe(_probe_sqli(fetcher, param, scan_id, use_post=is_post))
         if log_item: param_logs.append(log_item)
         if res_finding: param_findings.append(res_finding)
 
         if scan_mode == "full_active":
-            # Probe 3: Blind SQLi (time-based)
-            res_finding, log_item = await _probe_blind_sqli(fetcher, param, scan_id, use_post=is_post)
+            # Probe 3: Blind SQLi (time-based) — has its own internal 1.5s sleep
+            res_finding, log_item = await _safe_probe(_probe_blind_sqli(fetcher, param, scan_id, use_post=is_post))
             if log_item: param_logs.append(log_item)
             if res_finding: param_findings.append(res_finding)
 
             # Probe 4: LFI
             if param.is_file_param:
-                res_finding, log_item = await _probe_lfi(fetcher, param, scan_id, use_post=is_post)
+                res_finding, log_item = await _safe_probe(_probe_lfi(fetcher, param, scan_id, use_post=is_post))
                 if log_item: param_logs.append(log_item)
                 if res_finding: param_findings.append(res_finding)
 
             # Probe 5: CRLF
-            res_finding, log_item = await _probe_crlf(fetcher, param, scan_id, use_post=is_post)
+            res_finding, log_item = await _safe_probe(_probe_crlf(fetcher, param, scan_id, use_post=is_post))
             if log_item: param_logs.append(log_item)
             if res_finding: param_findings.append(res_finding)
 
         return param_findings, param_logs
 
     params_to_probe = surface.params[:MAX_ACTIVE_PROBES_PER_TARGET]
-    results = await asyncio.gather(*[_probe_param(p) for p in params_to_probe], return_exceptions=True)
+    results = await asyncio.gather(
+        *[_probe_param(p) for p in params_to_probe],
+        return_exceptions=True
+    )
 
     for item in results:
         if isinstance(item, tuple) and len(item) == 2:
@@ -303,7 +316,7 @@ async def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, 
     last_log = None
 
     # Step 1: Establish baseline response time with a benign value
-    baseline_url, baseline_post = _prepare_injection(param, "mapper_baseline_1", use_post=use_post)
+    baseline_url, baseline_post = _prepare_injection(param, "sentry_baseline_1", use_post=use_post)
     if not baseline_url:
         return None, None
 
@@ -311,12 +324,12 @@ async def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, 
     try:
         t_start = time.monotonic()
         if use_post:
-            await fetcher.fetch_post(baseline_url, data=baseline_post, timeout=8)
+            await fetcher.fetch_post(baseline_url, data=baseline_post, timeout=3)
         else:
-            await fetcher.fetch(baseline_url, timeout=8)
+            await fetcher.fetch(baseline_url, timeout=3)
         baseline_time = time.monotonic() - t_start
     except Exception:
-        baseline_time = 1.0  # conservative fallback
+        baseline_time = 0.5  # conservative fallback
 
     # Step 2: Test each blind SQLi payload
     for payload_template, db_label in BLIND_SQLI_PAYLOADS:
@@ -339,10 +352,11 @@ async def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, 
 
         try:
             t_start = time.monotonic()
+            max_timeout = BLIND_SQLI_SLEEP_SECONDS + 1.5
             if use_post:
-                result = await fetcher.fetch_post(probe_url, data=post_data, timeout=BLIND_SQLI_SLEEP_SECONDS + 5)
+                result = await fetcher.fetch_post(probe_url, data=post_data, timeout=max_timeout)
             else:
-                result = await fetcher.fetch(probe_url, timeout=BLIND_SQLI_SLEEP_SECONDS + 5)
+                result = await fetcher.fetch(probe_url, timeout=max_timeout)
             elapsed = time.monotonic() - t_start
 
             if result:
@@ -368,13 +382,11 @@ async def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, 
                     title=f"Time-Based Blind SQL Injection ({db_label}) ({method_str})",
                     description=(
                         f"Parameter '{param.param_name}' ({method_str}) is vulnerable to time-based blind "
-                        f"SQL injection via {db_label}. The server delayed {elapsed:.2f}s "
-                        f"(baseline {baseline_time:.2f}s, delta +{delay_delta:.2f}s) when "
-                        f"injecting: {payload}"
+                        f"SQL injection. Injecting '{payload}' caused a response delay of {elapsed:.2f}s "
+                        f"(baseline: {baseline_time:.2f}s)."
                     ),
                     owasp_category="A03:2021-Injection",
                     cwe="CWE-89",
-                    evidence_location="response_time",
                     evidence_snippet=(
                         f"[ACTIVE PROBE EXECUTION LOG]\n"
                         f"Probe Type: Time-Based Blind SQLi ({db_label}) ({method_str})\n"
@@ -505,7 +517,7 @@ async def _probe_lfi(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_pos
 
 async def _probe_crlf(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bool = False):
     method_str = "POST" if use_post else "GET"
-    marker = "X-Mapper-Injected"
+    marker = "X-Sentry-Injected"
     payload = f"{param.param_value}%0d%0a{marker}:1"
     probe_url, post_data = _prepare_injection(param, payload, use_post=use_post)
     if not probe_url:

@@ -1,6 +1,6 @@
 """
 report_exporter.py — HTML Report Generator
-Produces a self-contained, styled HTML report matching the Mapper dark UI.
+Produces a self-contained, styled HTML report matching the Sentry dark UI.
 """
 
 
@@ -129,7 +129,7 @@ def generate_html_report(report: dict) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mapper Scan Report — {_esc(report.get('target_url', ''))}</title>
+<title>Sentry Scan Report — {_esc(report.get('target_url', ''))}</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;700&display=swap');
 

@@ -124,7 +124,7 @@
     "type": "misconfiguration",
     "target_location": "body",
     "match_type": "regex",
-    "pattern": "index of /|directory listing|parent directory",
+    "pattern": "<title>Index of /|<h1[^>]*>Index of /|Directory Listing for /",
     "severity": "medium",
     "owasp_category": "A01:2021-Broken Access Control",
     "title": "Directory Listing Enabled",
@@ -159,7 +159,7 @@
   },
   {
     "id": "email-disclosure",
-    "enabled": true,
+    "enabled": false,
     "type": "misconfiguration",
     "target_location": "body",
     "match_type": "regex",
@@ -171,7 +171,7 @@
   },
   {
     "id": "internal-ip-disclosure",
-    "enabled": true,
+    "enabled": false,
     "type": "misconfiguration",
     "target_location": "body",
     "match_type": "regex",

@@ -91,10 +91,15 @@ class Matcher:
                         f"Invalid regex in rule {rule['id']}: {e}"
                     )
 
+    # Max content size fed to regex rules — prevents catastrophic backtracking
+    # on large pages. Catastrophically slow regex rules are pre-screened out of
+    # nuclei_cache.json at startup, so simple sequential evaluation is safe.
+    _BODY_CAP = 100_000  # 100 KB — halves regex search space; security content is always early in a page
+
     def match_snapshot(self, snapshot: PageSnapshot, scan_id: str) -> list:
         """
-        Run all rules against a PageSnapshot.
-        Returns a list of Finding objects for matched rules.
+        Run all rules against a PageSnapshot sequentially.
+        Bad regex patterns are prescreened out of the nuclei cache at load time.
         """
         findings = []
         now = datetime.now(timezone.utc).isoformat()
@@ -153,6 +158,10 @@ class Matcher:
         for location_name, content in targets:
             if not content:
                 continue
+
+            # Cap content size to avoid regex catastrophic backtracking
+            if len(content) > self._BODY_CAP:
+                content = content[:self._BODY_CAP]
 
             if match_type == "string":
                 result = self._match_string(pattern, content)

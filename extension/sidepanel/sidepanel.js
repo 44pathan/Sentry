@@ -2,6 +2,9 @@ import { listScans, deleteScan, exportReport } from '../shared/api-client.js';
 import { analyzeFindings, prioritizeFixes, analyzeOwasp, askQuestion } from '../ai/analyzer.js';
 import { getAiStatus } from '../ai/gemini-client.js';
 
+/** Escape HTML special chars to prevent XSS from server-supplied data */
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
 function formatDate(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
@@ -280,17 +283,21 @@ async function refreshLiveScans() {
         <button class="btn-download" data-id="${scan.scan_id}" data-format="json" title="Download JSON report">⬇ JSON</button>
       ` : '';
       
+      const eUrl    = esc(scan.target_url);
+      const eStatus = esc(scan.status);
+      const eScanId = esc(scan.scan_id);
+
       item.innerHTML = `
         <div class="scan-header">
-          <div class="scan-url" title="${scan.target_url}">${scan.target_url}</div>
-          <div class="status-badge ${scan.status}">${scan.status}</div>
+          <div class="scan-url" title="${eUrl}">${eUrl}</div>
+          <div class="status-badge ${eStatus}">${eStatus}</div>
         </div>
         ${progressHtml}
         <div class="scan-footer">
           ${scoreHtml}
           <div class="scan-actions">
             ${viewHtml}
-            <button class="btn-delete" data-id="${scan.scan_id}" title="Delete scan">✕</button>
+            <button class="btn-delete" data-id="${eScanId}" title="Delete scan">✕</button>
           </div>
         </div>
       `;

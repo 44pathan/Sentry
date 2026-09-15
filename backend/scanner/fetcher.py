@@ -1,19 +1,27 @@
 """
 fetcher.py — Layer 1: Raw HTTP Fetcher
-Handles async HTTP requests with redirect tracking, TLS inspection,
-timeout/retry logic, and concurrency limiting.
+Uses synchronous `requests` via asyncio.run_in_executor to avoid Python 3.14 +
+aiohttp SSL-cancellation SIGKILL crashes. The public async API is preserved so
+all callers (orchestrator, active_checks) continue to work unchanged.
+
+NOTE: TLS certificate / cipher inspection is intentionally omitted.
+Opening a second raw SSL socket for TLS info crashes Python 3.14's ssl module
+on certain servers (e.g. slow TLS handshakes). The scanner still detects
+unencrypted HTTP via the URL scheme — the most critical TLS finding.
 """
 
 import asyncio
-import socket
-import ssl
 import time
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urlparse
 
-import aiohttp
+import requests as _requests
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import sys
 import os
@@ -21,6 +29,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import FETCH_TIMEOUT, MAX_REDIRECTS, USER_AGENT, MAX_BODY_SIZE, DEFAULT_RPS_LIMIT
 
 logger = logging.getLogger(__name__)
+
+# Shared thread pool for running sync requests without blocking the event loop.
+# 10 workers = same as the default aiohttp concurrency limit.
+_FETCH_POOL = ThreadPoolExecutor(max_workers=10, thread_name_prefix="fetcher")
 
 
 class AsyncRateLimiter:
@@ -30,13 +42,23 @@ class AsyncRateLimiter:
         self.rps = max(0.1, rps) if rps and rps > 0 else 0
         self._interval = 1.0 / self.rps if self.rps else 0
         self._last_request = 0.0
-        self._lock = asyncio.Lock()
+        self._lock = None
+        self._lock_loop = None
+
+    def _get_lock(self):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
 
     async def acquire(self):
-        """Wait until a request slot is available."""
         if not self._interval:
-            return  # unlimited
-        async with self._lock:
+            return
+        async with self._get_lock():
             now = time.monotonic()
             elapsed = now - self._last_request
             if elapsed < self._interval:
@@ -75,10 +97,114 @@ class FetchResult:
     server: str = ""
 
 
+
+def _sync_fetch(url: str, method: str = "GET",
+                timeout: float = FETCH_TIMEOUT,
+                max_redirects: int = MAX_REDIRECTS,
+                user_agent: str = USER_AGENT,
+                extra_cookies: dict = None,
+                extra_headers: dict = None,
+                data: dict = None) -> FetchResult:
+    """
+    Synchronous HTTP fetch using requests. Called from a thread pool.
+    Never blocks the asyncio event loop.
+    """
+    result = FetchResult(url=url)
+    start_time = time.monotonic()
+
+    session = _requests.Session()
+    session.max_redirects = max_redirects
+    session.headers.update({"User-Agent": user_agent})
+    if extra_headers:
+        session.headers.update(extra_headers)
+    if extra_cookies:
+        session.cookies.update(extra_cookies)
+
+    try:
+        resp = session.request(
+            method,
+            url,
+            timeout=(5, min(timeout, 8)),  # (connect+SSL, read); keeps slow servers from hanging forever
+            verify=False,
+            allow_redirects=True,
+            data=data,
+            stream=True,                   # stream to avoid reading huge bodies into RAM
+        )
+
+        elapsed = (time.monotonic() - start_time) * 1000
+
+        # Capture redirect chain
+        redirect_chain = []
+        for r in resp.history:
+            redirect_chain.append({
+                "url": str(r.url),
+                "status": r.status_code,
+                "location": r.headers.get("Location", ""),
+            })
+
+        headers = {k.lower(): v for k, v in resp.headers.items()}
+        content_type = headers.get("content-type", "")
+
+        # Read body with size cap
+        body = ""
+        if ("text" in content_type or "json" in content_type
+                or "xml" in content_type or "html" in content_type
+                or not content_type):
+            raw = resp.raw.read(MAX_BODY_SIZE + 1, decode_content=True)
+            if len(raw) > MAX_BODY_SIZE:
+                raw = raw[:MAX_BODY_SIZE]
+            body = raw.decode("utf-8", errors="replace")
+
+        resp.close()
+
+        # Extract cookies
+        cookies = {}
+        for cname, cval in resp.cookies.items():
+            cookies[cname] = {
+                "value": cval,
+                "domain": resp.cookies.get_dict().get(cname, ""),
+                "path": "",
+                "secure": False,
+                "httponly": False,
+                "samesite": "",
+            }
+
+        result.final_url = str(resp.url)
+        result.status_code = resp.status_code
+        result.headers = headers
+        result.body = body
+        result.redirect_chain = redirect_chain
+        result.response_time_ms = round(elapsed, 2)
+        result.cookies = cookies
+        result.content_type = content_type
+        result.server = headers.get("server", "")
+
+        # TLS protocol inspection intentionally skipped — opening a second SSL
+        # socket to inspect cipher/cert crashes Python 3.14 on certain servers.
+        # Unencrypted-HTTP detection still works via the URL scheme check.
+
+    except _requests.exceptions.Timeout:
+        result.error = f"Timeout after {timeout}s"
+    except _requests.exceptions.SSLError as e:
+        result.error = f"SSL error: {e}"
+    except _requests.exceptions.ConnectionError as e:
+        result.error = f"Connection error: {e}"
+    except Exception as e:
+        result.error = f"Fetch error: {e}"
+    finally:
+        session.close()
+
+    if not result.final_url:
+        result.final_url = url
+
+    return result
+
+
 class Fetcher:
     """
-    Async HTTP fetcher with redirect tracking, TLS inspection,
-    and concurrency control.
+    HTTP fetcher with rate limiting and concurrency control.
+    Async API preserved for compatibility with orchestrator/active_checks callers.
+    Internally uses synchronous requests via run_in_executor.
     """
 
     def __init__(self, concurrency=10, timeout=FETCH_TIMEOUT,
@@ -88,238 +214,54 @@ class Fetcher:
         self.timeout = timeout
         self.max_redirects = max_redirects
         self.user_agent = user_agent
-        self.extra_cookies = extra_cookies or {}   # {"session": "abc123"}
-        self.extra_headers = extra_headers or {}   # {"Authorization": "Bearer ..."}
+        self.extra_cookies = extra_cookies or {}
+        self.extra_headers = extra_headers or {}
         self.rate_limiter = AsyncRateLimiter(rate_limit) if rate_limit else None
-        self._semaphore = None  # Lazily created inside event loop
+        self._semaphore = None
+        self._semaphore_loop = None
 
     def _get_semaphore(self):
-        """Get or create semaphore inside the running event loop."""
-        if self._semaphore is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._semaphore is None or self._semaphore_loop is not loop:
             self._semaphore = asyncio.Semaphore(self.concurrency)
+            self._semaphore_loop = loop
         return self._semaphore
 
     async def fetch(self, url: str, method: str = "GET",
-                     follow_redirects: bool = True, timeout: float = None,
-                     data: dict = None) -> FetchResult:
+                    follow_redirects: bool = True, timeout: float = None,
+                    data: dict = None) -> FetchResult:
         """
-        Fetch a URL with full redirect chain tracking and TLS inspection.
-        Respects rate limiting and injects auth cookies/headers if configured.
-
-        Args:
-            data: Optional dict of form fields to send as POST body
-                  (application/x-www-form-urlencoded).
+        Async fetch — runs _sync_fetch in the shared thread pool.
+        asyncio.wait_for timeouts work correctly (cancel the executor future).
         """
         if self.rate_limiter:
             await self.rate_limiter.acquire()
+
         async with self._get_semaphore():
-            return await self._do_fetch(url, method, follow_redirects,
-                                        timeout=timeout, data=data)
+            loop = asyncio.get_event_loop()
+            effective_timeout = timeout if timeout is not None else self.timeout
+            result = await loop.run_in_executor(
+                _FETCH_POOL,
+                lambda: _sync_fetch(
+                    url=url,
+                    method=method,
+                    timeout=effective_timeout,
+                    max_redirects=self.max_redirects if follow_redirects else 0,
+                    user_agent=self.user_agent,
+                    extra_cookies=self.extra_cookies,
+                    extra_headers=self.extra_headers,
+                    data=data,
+                )
+            )
+            return result
 
     async def fetch_post(self, url: str, data: dict,
                          timeout: float = None) -> FetchResult:
         """Convenience wrapper for POST requests with form data."""
         return await self.fetch(url, method="POST", data=data, timeout=timeout)
-
-    async def _do_fetch(self, url: str, method: str,
-                        follow_redirects: bool, timeout: float = None,
-                        data: dict = None) -> FetchResult:
-        result = FetchResult(url=url)
-        redirect_chain = []
-        current_url = url
-        start_time = time.monotonic()
-
-        # Create SSL context that captures cert info
-        ssl_ctx = ssl.create_default_context()
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl.CERT_NONE
-
-        connector = aiohttp.TCPConnector(
-            ssl=ssl_ctx,
-            limit=self.concurrency,
-            family=socket.AF_INET
-        )
-
-        effective_timeout = timeout if timeout is not None else self.timeout
-        client_timeout = aiohttp.ClientTimeout(
-            total=effective_timeout,
-            connect=min(10.0, effective_timeout),
-            sock_read=min(10.0, effective_timeout)
-        )
-
-        try:
-            # Merge base headers with any auth headers
-            session_headers = {"User-Agent": self.user_agent}
-            if self.extra_headers:
-                session_headers.update(self.extra_headers)
-
-            # Build cookie jar from auth cookies
-            cookie_jar = aiohttp.CookieJar(unsafe=True)
-            if self.extra_cookies:
-                for cname, cval in self.extra_cookies.items():
-                    cookie_jar.update_cookies({cname: cval})
-
-            async with aiohttp.ClientSession(
-                connector=connector,
-                timeout=client_timeout,
-                headers=session_headers,
-                cookie_jar=cookie_jar,
-            ) as session:
-
-                # Run TLS inspection concurrently if HTTPS to eliminate sequential blocking delay
-                tls_task = None
-                if url.startswith("https://"):
-                    tls_task = asyncio.create_task(self._get_tls_info(url))
-
-                # Manual redirect following to capture chain
-                for i in range(self.max_redirects + 1):
-                    try:
-                        # Build request kwargs — include form data for POST
-                        req_kwargs = {
-                            "allow_redirects": False,
-                            "max_line_size": 8190,
-                            "max_field_size": 8190,
-                        }
-                        if data and method.upper() == "POST":
-                            req_kwargs["data"] = data
-
-                        async with session.request(
-                            method, current_url, **req_kwargs
-                        ) as resp:
-                            status = resp.status
-                            headers = {
-                                k.lower(): v for k, v in resp.headers.items()
-                            }
-
-                            # Check for redirect
-                            if status in (301, 302, 303, 307, 308) and follow_redirects:
-                                location = headers.get("location", "")
-                                if location:
-                                    redirect_chain.append({
-                                        "url": current_url,
-                                        "status": status,
-                                        "location": location
-                                    })
-                                    # Handle relative redirects
-                                    if location.startswith("/"):
-                                        parsed = urlparse(current_url)
-                                        location = f"{parsed.scheme}://{parsed.netloc}{location}"
-                                    current_url = location
-                                    continue
-
-                            # Read body (with size cap)
-                            body = ""
-                            content_type = headers.get("content-type", "")
-                            if "text" in content_type or "json" in content_type or "xml" in content_type or "html" in content_type or not content_type:
-                                raw = await resp.read()
-                                if len(raw) <= MAX_BODY_SIZE:
-                                    body = raw.decode("utf-8", errors="replace")
-                                else:
-                                    body = raw[:MAX_BODY_SIZE].decode("utf-8", errors="replace")
-
-                            # Extract cookies
-                            cookies = {}
-                            for cookie_name, cookie_morsel in resp.cookies.items():
-                                cookies[cookie_name] = {
-                                    "value": cookie_morsel.value,
-                                    "domain": cookie_morsel.get("domain", ""),
-                                    "path": cookie_morsel.get("path", ""),
-                                    "secure": bool(cookie_morsel.get("secure")),
-                                    "httponly": bool(cookie_morsel.get("httponly")),
-                                    "samesite": cookie_morsel.get("samesite", ""),
-                                }
-
-                            elapsed = (time.monotonic() - start_time) * 1000
-
-                            result.final_url = current_url
-                            result.status_code = status
-                            result.headers = headers
-                            result.body = body
-                            result.redirect_chain = redirect_chain
-                            result.response_time_ms = round(elapsed, 2)
-                            result.cookies = cookies
-                            result.content_type = content_type
-                            result.server = headers.get("server", "")
-
-                            break
-
-                    except aiohttp.ClientError as e:
-                        if i < self.max_redirects:
-                            redirect_chain.append({
-                                "url": current_url,
-                                "status": 0,
-                                "error": str(e)
-                            })
-                        result.error = f"HTTP error: {str(e)}"
-                        break
-
-                if tls_task:
-                    try:
-                        result.tls_info = await asyncio.wait_for(tls_task, timeout=5.0)
-                    except Exception as e:
-                        logger.debug(f"[Fetcher] Concurrent TLS info task failed: {e}")
-
-        except asyncio.TimeoutError:
-            result.error = f"Timeout after {self.timeout}s"
-        except Exception as e:
-            result.error = f"Fetch error: {str(e)}"
-
-        if not result.final_url:
-            result.final_url = current_url
-
-        result.redirect_chain = redirect_chain
-        return result
-
-    async def _get_tls_info(self, url: str) -> TLSInfo:
-        """Extract TLS certificate information from a URL."""
-        tls = TLSInfo()
-        parsed = urlparse(url)
-        host = parsed.hostname
-        port = parsed.port or 443
-
-        try:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port, ssl=ctx),
-                timeout=10
-            )
-
-            ssl_object = writer.get_extra_info("ssl_object")
-            if ssl_object:
-                tls.protocol = ssl_object.version() or ""
-                cipher_info = ssl_object.cipher()
-                if cipher_info:
-                    tls.cipher = cipher_info[0]
-
-                cert = ssl_object.getpeercert()
-                if cert:
-                    tls.has_valid_cert = True
-                    tls.cert_subject = dict(
-                        x[0] for x in cert.get("subject", ())
-                    ) if cert.get("subject") else {}
-                    tls.cert_issuer = dict(
-                        x[0] for x in cert.get("issuer", ())
-                    ) if cert.get("issuer") else {}
-                    tls.cert_expiry = cert.get("notAfter", "")
-                    tls.cert_not_before = cert.get("notBefore", "")
-                    tls.serial_number = cert.get("serialNumber", "")
-                else:
-                    # Try with verification to get cert
-                    tls.has_valid_cert = False
-
-            writer.close()
-            await writer.wait_closed()
-
-        except ssl.SSLCertVerificationError as e:
-            tls.error = f"Certificate verification failed: {e}"
-            tls.has_valid_cert = False
-        except Exception as e:
-            tls.error = f"TLS inspection error: {e}"
-
-        return tls
 
     async def fetch_multiple(self, urls: list, method: str = "GET") -> list:
         """Fetch multiple URLs concurrently."""
@@ -330,10 +272,5 @@ class Fetcher:
 # ── Synchronous wrapper for non-async contexts ───────────
 
 def fetch_url(url: str, **kwargs) -> FetchResult:
-    """Synchronous wrapper around the async fetcher."""
-    fetcher = Fetcher(**kwargs)
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(fetcher.fetch(url))
-    finally:
-        loop.close()
+    """Synchronous wrapper — calls _sync_fetch directly."""
+    return _sync_fetch(url, **kwargs)

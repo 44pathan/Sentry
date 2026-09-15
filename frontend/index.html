@@ -57,6 +57,9 @@
         <button class="nav-item" data-page="rules" id="nav-rules">
           Rules
         </button>
+        <button class="nav-item" data-page="ai-analysis" id="nav-ai-analysis">
+          AI Analysis <span style="display:inline-block;width:6px;height:6px;background:#9333ea;border-radius:50%;margin-left:auto;"></span>
+        </button>
       </div>
       <div class="sidebar-footer">
         <div class="user-info">
@@ -192,6 +195,7 @@
             <p id="report-subtitle"></p>
           </div>
           <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary btn-sm ai-action-btn" onclick="App.askAiReport()" style="border-color:#9333ea;color:#d8b4fe;">Ask AI to Analyze</button>
             <button class="btn btn-secondary btn-sm" onclick="App.exportReport('json')">Export JSON</button>
             <button class="btn btn-secondary btn-sm" onclick="App.exportReport('html')">Export HTML</button>
           </div>
@@ -296,6 +300,31 @@
             <h3>Active Probe Execution Log <span id="active-probes-count" style="color:var(--text-muted);font-weight:400"></span></h3>
           </div>
           <div id="active-probes-list"></div>
+        </div>
+      </section>
+
+      <!-- ── AI Analysis ──────────────────────── -->
+      <section id="page-ai-analysis" class="page-section hidden ai-section">
+        <div class="page-header">
+          <h1>AI Analysis</h1>
+          <p>AI-powered vulnerability analysis and remediation guidance &nbsp;<span id="ai-provider-badge" style="font-size:12px;font-weight:600;opacity:0.75;background:var(--bg-card);border:1px solid var(--border);padding:3px 8px;border-radius:20px;white-space:nowrap;">⚡ Groq</span></p>
+        </div>
+        <div class="card">
+          <div class="form-group">
+            <label for="ai-scan-selector">Select Scan to Analyze</label>
+            <select id="ai-scan-selector" style="width:100%;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:14px;">
+              <option value="">-- Select a completed scan --</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:12px;margin-top:16px;flex-wrap:wrap">
+            <button class="btn btn-secondary ai-action-btn" onclick="App.runAiAction('executive_summary')">Executive Summary</button>
+            <button class="btn btn-secondary ai-action-btn" onclick="App.runAiAction('prioritize_fixes')">Prioritize Fixes</button>
+            <button class="btn btn-secondary ai-action-btn" onclick="App.runAiAction('owasp_analysis')">OWASP Analysis</button>
+          </div>
+          <div id="ai-response-container" class="ai-response-area hidden" style="margin-top:24px;">
+            <div id="ai-loading-indicator" class="ai-loading hidden">Thinking<span class="dots">...</span></div>
+            <div id="ai-response-content" style="white-space:pre-wrap;font-family:'Inter','Space Mono',monospace;line-height:1.6;"></div>
+          </div>
         </div>
       </section>
 

@@ -48,16 +48,12 @@ IMPORT_TAGS = {
 }
 
 
+import json
+
 def import_nuclei_templates(templates_dir: str, max_templates: int = 500) -> list:
     """
     Import curated Nuclei YAML templates into unified rule schema.
-
-    Args:
-        templates_dir: Path to nuclei-templates directory
-        max_templates: Maximum number of templates to import
-
-    Returns:
-        List of unified rule schema dicts
+    Uses disk cache (nuclei_cache.json) for instant startup performance.
     """
     rules = []
 
@@ -65,7 +61,17 @@ def import_nuclei_templates(templates_dir: str, max_templates: int = 500) -> lis
         logger.warning(f"[NucleiImporter] Templates dir not found: {templates_dir}")
         return rules
 
-    # Walk the templates directory
+    cache_file = os.path.join(os.path.dirname(templates_dir), "nuclei_cache.json")
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r") as f:
+                rules = json.load(f)
+            logger.info(f"[NucleiImporter] Loaded {len(rules)} cached rules from {cache_file}")
+            return rules
+        except Exception as e:
+            logger.warning(f"[NucleiImporter] Failed to read cache: {e}")
+
+    # Walk the templates directory if no valid cache
     yaml_files = []
     for root, dirs, files in os.walk(templates_dir):
         for f in files:
@@ -86,6 +92,14 @@ def import_nuclei_templates(templates_dir: str, max_templates: int = 500) -> lis
                 imported += 1
         except Exception as e:
             logger.debug(f"[NucleiImporter] Skipping {filepath}: {e}")
+
+    if rules:
+        try:
+            with open(cache_file, "w") as f:
+                json.dump(rules, f)
+            logger.info(f"[NucleiImporter] Saved {len(rules)} rules to cache: {cache_file}")
+        except Exception as e:
+            logger.warning(f"[NucleiImporter] Failed to save cache: {e}")
 
     logger.info(f"[NucleiImporter] Imported {len(rules)} rules from {imported} templates")
     return rules
@@ -167,8 +181,9 @@ def _parse_template(filepath: str) -> list:
         matchers = req.get("matchers", [])
         matchers_condition = req.get("matchers-condition", "or").lower()
 
-        # Collect all match patterns from all matchers in this request
-        combined_patterns = []
+        # Collect patterns grouped by type
+        content_patterns = []  # body/header string/regex matches
+        status_patterns = []   # status code matches
 
         for matcher in matchers:
             matcher_type = matcher.get("type", "word")
@@ -179,22 +194,18 @@ def _parse_template(filepath: str) -> list:
             if matcher_type == "status":
                 status_codes = matcher.get("status", [])
                 for sc in status_codes:
-                    combined_patterns.append({
-                        "match_type": "status_code",
-                        "pattern": str(sc),
-                        "part": "status",
-                    })
+                    status_patterns.append(str(sc))
                 continue
 
-            # Handle DSL matchers — convert simple DSL to regex/string where possible
+            # Handle DSL matchers
             if matcher_type == "dsl":
                 dsl_exprs = matcher.get("dsl", [])
                 if isinstance(dsl_exprs, str):
                     dsl_exprs = [dsl_exprs]
                 for expr in dsl_exprs:
                     converted = _convert_dsl_to_pattern(expr)
-                    if converted:
-                        combined_patterns.append(converted)
+                    if converted and converted.get("match_type") != "status_code":
+                        content_patterns.append(converted)
                 continue
 
             # Handle word and regex matchers
@@ -206,25 +217,43 @@ def _parse_template(filepath: str) -> list:
             target_location = _map_part_to_location(part)
 
             if condition == "and" and len(words) > 1:
-                # AND condition — combine all words into one rule with regex alternation
                 escaped = [re.escape(w) for w in words]
                 combo_pattern = "(?=.*" + ")(?=.*".join(escaped) + ")"
-                combined_patterns.append({
+                content_patterns.append({
                     "match_type": "regex",
                     "pattern": combo_pattern,
                     "part": part,
                 })
             else:
-                # OR condition (default) — each word is a separate pattern
                 for word in words:
-                    combined_patterns.append({
+                    content_patterns.append({
                         "match_type": our_match_type,
                         "pattern": word,
                         "part": part,
                     })
 
-        # Create a rule for each collected pattern
-        for pat_info in combined_patterns:
+        # ── FALSE POSITIVE PREVENTION ──
+        # When matchers-condition is "and", Nuclei requires ALL matchers to pass.
+        # We can only check content patterns (not send HTTP requests to specific paths),
+        # so we ONLY create rules from content patterns (body/header), never from
+        # status codes alone. If the only matchers are status codes, skip the template.
+        
+        if matchers_condition == "and":
+            # AND condition: only use content patterns, skip if none exist
+            if not content_patterns:
+                continue
+            # Use only the most specific content pattern (longest)
+            best = max(content_patterns, key=lambda p: len(p.get("pattern", "")))
+            # Skip very short/generic patterns that match too broadly
+            if len(best.get("pattern", "")) < 5:
+                continue
+            patterns_to_use = [best]
+        else:
+            # OR condition: use content patterns only (skip status-only rules)
+            patterns_to_use = [p for p in content_patterns if len(p.get("pattern", "")) >= 5]
+
+        # Create rules only from validated patterns
+        for pat_info in patterns_to_use:
             rule_id = f"nuclei-{template_id}-{len(rules)}"
             target_location = _map_part_to_location(pat_info.get("part", "body"))
             rules.append({

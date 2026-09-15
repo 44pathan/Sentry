@@ -33,7 +33,7 @@ class ScanJob:
     scan_id: str = ""
     target_url: str = ""
     status: str = "queued"          # queued | fetching | analyzing | active_probing | correlating | completed | failed
-    progress: int = 0               # 0-100
+    progress: int = 0
     created_at: str = ""
     started_at: str = ""
     completed_at: str = ""
@@ -168,15 +168,23 @@ class ScanOrchestrator:
                 self.storage.store_job(job.to_dict())
 
     def _run_scan_sync(self, scan_id: str, target_url: str, options: dict):
-        """Synchronous wrapper to run async scan pipeline in a thread."""
+        """Synchronous wrapper to run async scan pipeline in a thread.
+        Creates a fresh event loop, runs the full pipeline, then tears it
+        down cleanly — cancelling every pending task so nothing leaks into
+        the next scan's event loop.
+        """
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(
                 self._run_scan_pipeline(scan_id, target_url, options)
             )
-        except Exception as e:
-            logger.error(f"[Scan {scan_id[:8]}] Unhandled pipeline error: {e}", exc_info=True)
+        except BaseException as e:
+            # Catch BaseException so CancelledError (Python 3.8+ BaseException subclass)
+            # and other non-Exception failures are also handled
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise  # Let process-level signals propagate normally
+            logger.error(f"[Scan {scan_id[:8]}] Unhandled pipeline error: {type(e).__name__}: {e}", exc_info=True)
             self._update_job(
                 scan_id,
                 status="failed",
@@ -184,7 +192,28 @@ class ScanOrchestrator:
                 completed_at=datetime.now(timezone.utc).isoformat()
             )
         finally:
-            loop.close()
+            # ── Proper loop teardown ────────────────────────────
+            # Cancel every pending task so they don't linger or crash
+            # the next scan that reuses this thread.
+            try:
+                pending = asyncio.all_tasks(loop)
+                if pending:
+                    for task in pending:
+                        task.cancel()
+                    # Let the cancelled tasks run their cleanup (CancelledError)
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+            except Exception:
+                pass
+            finally:
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except Exception:
+                    pass
+                loop.close()
+                asyncio.set_event_loop(None)
+
 
     async def _run_scan_pipeline(self, scan_id: str, target_url: str, options: dict):
         """Main async scanning pipeline."""
@@ -255,10 +284,19 @@ class ScanOrchestrator:
         self._update_job(scan_id, status="analyzing", progress=30)
 
         # ── Stage 3: Deep Scan (common paths check) ───────────
-        deep_scan = options.get("deep_scan", True)
+        scan_mode = options.get("scan_mode", "passive")
+        deep_scan = options.get("deep_scan", scan_mode != "passive")
         common_path_findings = []
         if deep_scan:
-            common_path_findings = await self._check_common_paths(target_url, scan_id, fetcher=fetcher)
+            try:
+                # Hard cap: common paths check must finish in 20s (slow servers can hang forever)
+                common_path_findings = await asyncio.wait_for(
+                    self._check_common_paths(target_url, scan_id, fetcher=fetcher),
+                    timeout=12
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"[Scan {scan_id[:8]}] Common paths check timed out after 20s — skipping")
+                common_path_findings = []
 
         self._update_job(scan_id, progress=45)
 
@@ -266,7 +304,9 @@ class ScanOrchestrator:
         findings = []
         findings.extend(common_path_findings)
 
+        logger.info(f"[Scan {scan_id[:8]}] Stage 4: Running {len(self.matcher.rules)} detection rules against snapshot")
         rule_findings = self.matcher.match_snapshot(snapshot, scan_id=scan_id)
+        logger.info(f"[Scan {scan_id[:8]}] Stage 4 done: {len(rule_findings)} rule matches found")
         findings.extend(rule_findings)
 
         self._update_job(scan_id, progress=60)
@@ -298,14 +338,18 @@ class ScanOrchestrator:
         if scan_mode in ("light_active", "full_active"):
             logger.info(f"[Scan {scan_id[:8]}] Running active probes ({scan_mode})")
             self._update_job(scan_id, status="active_probing", progress=65)
-            active_findings, active_probes_log = await run_active_probes(
-                fetcher, surface, scan_id, scan_mode
-            )
-            findings.extend(active_findings)
-            logger.info(
-                f"[Scan {scan_id[:8]}] Active probes executed {len(active_probes_log)} checks, "
-                f"found {len(active_findings)} findings"
-            )
+            try:
+                active_findings, active_probes_log = await asyncio.wait_for(
+                    run_active_probes(fetcher, surface, scan_id, scan_mode),
+                    timeout=300
+                )
+                findings.extend(active_findings)
+                logger.info(
+                    f"[Scan {scan_id[:8]}] Active probes executed {len(active_probes_log)} checks, "
+                    f"found {len(active_findings)} findings"
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"[Scan {scan_id[:8]}] Active scan timed out after 5 minutes, continuing with whatever findings were collected")
         else:
             logger.info(f"[Scan {scan_id[:8]}] Skipping active probes (passive mode)")
 
@@ -366,8 +410,18 @@ class ScanOrchestrator:
         )
 
     async def _check_common_paths(self, base_url: str, scan_id: str, fetcher: Fetcher = None) -> list:
-        """Check for exposed sensitive files/paths."""
+        """Check for exposed sensitive files/paths.
+
+        Uses synchronous requests in a ThreadPoolExecutor instead of async aiohttp
+        to avoid Python 3.14 + aiohttp SSL-cancellation SIGKILL crashes that occur
+        when asyncio.wait_for cancels in-flight SSL handshakes.
+        """
+        import requests as _requests
+        import urllib3
         from urllib.parse import urljoin
+        from concurrent.futures import ThreadPoolExecutor, wait as cf_wait
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         now = datetime.now(timezone.utc).isoformat()
         sensitive_paths = [
@@ -400,31 +454,31 @@ class ScanOrchestrator:
              ""),
         ]
 
-        async def _check_path(path_info):
+        def _sync_check(path_info):
+            """Sync check — runs in a thread, safe to abandon."""
             path, title, severity, description, owasp = path_info
             url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
             try:
-                if fetcher:
-                    result = await fetcher.fetch(url, timeout=2)
-                else:
-                    f = Fetcher(concurrency=1)
-                    result = await f.fetch(url, timeout=2)
-
-                if result.status_code == 200:
-                    # Verify it's not a generic 200 (soft 404)
-                    body_lower = result.body.lower() if result.body else ""
+                resp = _requests.get(
+                    url,
+                timeout=(3, 3),       # (connect, read) — 3s each; GLS is slow but not that slow
+                    verify=False,
+                    allow_redirects=False,
+                    headers={"User-Agent": "Mozilla/5.0 Sentry-Scanner/1.0"},
+                    stream=False,
+                )
+                if resp.status_code == 200:
+                    body = resp.text[:2000]
+                    body_lower = body.lower()
                     is_soft_404 = any(x in body_lower for x in [
                         "404", "not found", "page not found",
                         "does not exist", "error page"
                     ])
-
-                    if not is_soft_404 and len(result.body) > 10:
-                        # Special validation for specific files
-                        if path == "/.git/config" and "[core]" not in result.body:
+                    if not is_soft_404 and len(body) > 10:
+                        if path == "/.git/config" and "[core]" not in body:
                             return None
-                        if path == "/.env" and "=" not in result.body:
+                        if path == "/.env" and "=" not in body:
                             return None
-
                         return Finding(
                             id=str(uuid.uuid4()),
                             scan_id=scan_id,
@@ -437,7 +491,7 @@ class ScanOrchestrator:
                             description=description,
                             owasp_category=owasp,
                             evidence_location="path",
-                            evidence_snippet=result.body[:200],
+                            evidence_snippet=body[:200],
                             remediation=f"Remove or restrict access to {path}",
                         )
             except Exception:
@@ -445,13 +499,24 @@ class ScanOrchestrator:
             return None
 
         findings = []
-        results = await asyncio.gather(*[_check_path(p) for p in sensitive_paths], return_exceptions=True)
 
-        for res in results:
-            if isinstance(res, Finding):
-                findings.append(res)
+        # Run all path checks concurrently in a thread pool (max 4 concurrent SSL handshakes)
+        # Using sync requests avoids the Python 3.14 + aiohttp SSL-cancellation SIGKILL bug
+        with ThreadPoolExecutor(max_workers=9, thread_name_prefix="pathcheck") as pool:
+            future_to_path = {pool.submit(_sync_check, p): p for p in sensitive_paths}
+            # All 9 paths run simultaneously; wait up to 9s (3s timeout × 1 round + buffer)
+            done, _ = cf_wait(future_to_path, timeout=9)
+            for future in done:
+                try:
+                    result = future.result()
+                    if result:
+                        findings.append(result)
+                except Exception:
+                    pass
 
         return findings
+
+
 
     def _check_security_headers(self, snapshot: PageSnapshot, scan_id: str) -> list:
         """Check for missing security headers."""

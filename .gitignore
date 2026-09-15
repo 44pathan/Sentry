@@ -1,53 +1,67 @@
-# Python
+# ── Python ──────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
-.Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+.eggs/
+dist/
+build/
+.Python
 
-# Virtual Environment
+# ── Virtual Environment ──────────────────────────────────
 venv/
 .venv/
+env/
 ENV/
-env.bak/
-venv.bak/
 
-# Environment Variables
+# ── Environment & Secrets ────────────────────────────────
 .env
 .env.local
+.env.production
+*.secret
+backend/.jwt_secret
+.jwt_secret
 
-# IDEs
+# ── Runtime data (never commit scan results or user data) ─
+data/scans_db.json
+data/nuclei-templates/
+data/wappalyzer/
+backend/users.json
+
+# ── Logs ─────────────────────────────────────────────────
+*.log
+backend/backend.log
+
+# ── Sentry runtime files ──────────────────────────────────
+backend/.backend.pid
+extension.pem
+extension.crx
+*.crx
+
+# ── Test cache ────────────────────────────────────────────
+.pytest_cache/
+
+
+# ── Elasticsearch ─────────────────────────────────────────
+elasticsearch_data/
+
+# ── Sensitive loose files ─────────────────────────────────
+groq_api.txt
+bugs_report.txt
+*.key.txt
+*_api.txt
+*_secret.txt
+
+# ── IDEs ──────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
+.DS_Store
 
-# Node
+# ── Node ──────────────────────────────────────────────────
 node_modules/
 npm-debug.log
 yarn-error.log
-
-# Sentry specific
-.jwt_secret
-users.json
-elasticsearch_data/
-extension.pem
-backend/.jwt_secret
-backend/users.json
-data/wappalyzer/
-data/nuclei-templates/
+*.crx

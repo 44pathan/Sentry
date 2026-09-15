@@ -1,6 +1,9 @@
 // popup.js
 import * as apiClient from '../shared/api-client.js';
 
+/** Escape HTML special chars to prevent XSS from server-supplied data */
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
 // DOM Elements
 const loginSection = document.getElementById('login-section');
 const mainSection = document.getElementById('main-section');
@@ -119,11 +122,13 @@ async function loadRecentScans() {
             else if (score > 20) colorClass = 'medium';
 
             const shortUrl = (scan.target_url || '—').substring(0, 35);
+            const escapedUrl = esc(scan.target_url || '—');
+            const escapedStatus = esc(scan.status || 'unknown');
             li.innerHTML = `
-                <div class="recent-scan-url" title="${scan.target_url}">${shortUrl}${(scan.target_url || '').length > 35 ? '…' : ''}</div>
+                <div class="recent-scan-url" title="${escapedUrl}">${esc(shortUrl)}${(scan.target_url || '').length > 35 ? '…' : ''}</div>
                 <div class="recent-scan-meta">
-                    <span class="scan-badge ${scan.status}">${scan.status}</span>
-                    ${scan.status === 'completed' ? `<span style="color: var(--${colorClass})">${score}</span>` : ''}
+                    <span class="scan-badge ${escapedStatus}">${escapedStatus}</span>
+                    ${scan.status === 'completed' ? `<span style="color: var(--${colorClass})">${Number(score).toFixed(0)}</span>` : ''}
                 </div>
             `;
             recentScansList.appendChild(li);
@@ -197,7 +202,7 @@ async function handleLogin(e) {
         const result = await apiClient.login(username, password);
         
         if (result && result.token) {
-            chrome.storage.local.set({ mapper_user: result.username || username });
+            chrome.storage.local.set({ sentry_user: result.username || username });
             showMainSection({ username: result.username || username });
         } else {
             throw new Error('Invalid credentials');

@@ -42,11 +42,28 @@ _MAP_2021_TO_2025 = {
 }
 
 
+_MAP_PREFIX_TO_2025 = {
+    "A01": "A01:2025-Broken Access Control",
+    "A02": "A04:2025-Cryptographic Failures",
+    "A03": "A05:2025-Injection",
+    "A04": "A06:2025-Insecure Design",
+    "A05": "A02:2025-Security Misconfiguration",
+    "A06": "A03:2025-Software Supply Chain Failures",
+    "A07": "A07:2025-Authentication Failures",
+    "A08": "A08:2025-Software or Data Integrity Failures",
+    "A09": "A09:2025-Security Logging and Alerting Failures",
+    "A10": "A01:2025-Broken Access Control",
+}
+
 def map_2021_to_2025(owasp_2021: str) -> str:
     """Convert an OWASP 2021 category string to its 2025 equivalent."""
     if not owasp_2021:
         return ""
-    return _MAP_2021_TO_2025.get(owasp_2021, "")
+    if owasp_2021 in _MAP_2021_TO_2025:
+        return _MAP_2021_TO_2025[owasp_2021]
+    # Check by prefix (e.g. "A05" or "A05: Security Misconfiguration")
+    prefix = owasp_2021[:3].upper()
+    return _MAP_PREFIX_TO_2025.get(prefix, "")
 
 
 def get_2025_coverage(findings: list) -> dict:

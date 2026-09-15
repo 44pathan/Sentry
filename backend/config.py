@@ -8,6 +8,28 @@ import secrets
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+def _load_dotenv():
+    """Load variables from .env file into os.environ if not already set."""
+    env_paths = [
+        os.path.join(BASE_DIR, "..", ".env"),
+        os.path.join(BASE_DIR, ".env"),
+    ]
+    for p in env_paths:
+        if os.path.isfile(p):
+            try:
+                with open(p, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k, v = k.strip(), v.strip().strip("'\"")
+                            if k and not os.getenv(k):
+                                os.environ[k] = v
+            except Exception:
+                pass
+
+_load_dotenv()
+
 # ── Elasticsearch ──────────────────────────────────────────
 ES_HOST = os.getenv("ES_HOST", "https://localhost:9200")
 ES_USER = os.getenv("ES_USER", "elastic")
@@ -17,7 +39,7 @@ SCAN_INDEX_PREFIX = "scan-results"       # index: scan-results-YYYY.MM.DD
 SCAN_META_INDEX = "scan-metadata"        # stores scan job metadata
 
 # ── Server ─────────────────────────────────────────────────
-MAPPER_PORT = int(os.getenv("MAPPER_PORT", "5001"))
+SENTRY_PORT = int(os.getenv("SENTRY_PORT", os.getenv("MAPPER_PORT", "5001")))
 
 # ── JWT Authentication ─────────────────────────────────────
 # Persist JWT_SECRET so tokens survive restarts
@@ -63,33 +85,32 @@ NUCLEI_TEMPLATES_PATH = os.path.join(BASE_DIR, "..", "data", "nuclei-templates")
 
 # ── Scanner Settings ──────────────────────────────────────
 MAX_CONCURRENT_SCANS = 3
-SCAN_TIMEOUT = 120          # seconds per scan
-FETCH_TIMEOUT = 15           # seconds per HTTP request
+SCAN_TIMEOUT = 60           # seconds per scan (reduced for speed)
+FETCH_TIMEOUT = 8            # seconds per HTTP request (was 15, reduced for speed)
 MAX_REDIRECTS = 5
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-MAX_BODY_SIZE = 5 * 1024 * 1024   # 5 MB cap on response body
+MAX_BODY_SIZE = 200 * 1024       # 200 KB cap — matches matcher._BODY_CAP; reading more is wasted RAM
 
 # ── Active Scanner Settings ────────────────────────────────
 ACTIVE_SCAN_ENABLED = True
-MAX_ACTIVE_PROBES_PER_TARGET = 10    # Max probes per target for fast execution
-ACTIVE_REQUEST_DELAY = 0.02          # 20ms delay between active probes
-ACTIVE_XSS_CANARY = "mapper_xss_probe"
+MAX_ACTIVE_PROBES_PER_TARGET = 3     # Max params to probe (keep active scans fast)
+ACTIVE_REQUEST_DELAY = 0.01          # 10ms delay between active probes
+ACTIVE_XSS_CANARY = "sentry_xss_probe"
 
 # ── Rate Limiting (Active Probes) ─────────────────────────
-DEFAULT_RPS_LIMIT = 20               # Max requests per second (0 = unlimited)
+DEFAULT_RPS_LIMIT = 30               # Max requests per second (0 = unlimited)
 
 # ── Blind SQLi Probe Settings ─────────────────────────────
-BLIND_SQLI_SLEEP_SECONDS = 1.5       # Sleep duration injected into blind SQLi payloads
-BLIND_SQLI_THRESHOLD = 1.2           # Response delay threshold to flag as vulnerable
+BLIND_SQLI_SLEEP_SECONDS = 1.5       # Sleep duration for blind SQLi (shorter = faster scan)
+BLIND_SQLI_THRESHOLD = 1.0           # Require 1.0s delta to confirm (balance speed vs FP)
 
 # ── CVE Enrichment ─────────────────────────────────────────
 OSV_API_URL = "https://api.osv.dev/v1/vulns"
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 CVE_CACHE_TTL = 86400  # 24 hours
 
-# ── Gemini AI ──────────────────────────────────────────────
-# Set your Gemini API key here or via GEMINI_API_KEY env var.
-# Get a free key at: https://aistudio.google.com/apikey
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
-
+# ── AI Provider (Groq / OpenAI-compatible) ───────────────
+OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1")
+OPENAI_MODEL    = os.getenv("OPENAI_MODEL", "qwen/qwen3.8-27b")
+AI_PROVIDER     = "openai"   # fixed to OpenAI-compatible (Groq/OpenRouter/etc.)

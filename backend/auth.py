@@ -150,8 +150,7 @@ def clear_failed_attempts(ip):
 # ── Auth decorator ────────────────────────────────────────
 
 def require_auth(f):
-    """Decorator to protect API routes with JWT authentication.
-    If no token is provided, allows access as 'admin' (local-only tool)."""
+    """Decorator to protect API routes with JWT authentication."""
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization", "")
@@ -163,10 +162,9 @@ def require_auth(f):
                 request.auth_role = payload.get("role", "")
                 return f(*args, **kwargs)
 
-        # No token or invalid token — allow as admin (local tool)
-        request.auth_user = "admin"
-        request.auth_role = "admin"
-        return f(*args, **kwargs)
+        # No valid token — reject
+        from flask import jsonify as _jsonify
+        return _jsonify({"error": "Authentication required"}), 401
     return decorated
 
 

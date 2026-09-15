@@ -4,8 +4,11 @@ Provides unified interface for storing and retrieving scan metadata & findings.
 Supports Elasticsearch 8.x indexing with automatic fallback to thread-safe in-memory storage.
 """
 
+import os
+import json
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -17,8 +20,8 @@ INDEX_RESULTS_PREFIX = "scan-results-"
 
 class ScanStorage:
     """
-    Unified storage manager for Mapper scans and findings.
-    Uses Elasticsearch if provided and healthy; otherwise falls back to in-memory dict.
+    Unified storage manager for Sentry scans and findings.
+    Uses Elasticsearch if provided and healthy; otherwise falls back to persistent disk storage (data/scans_db.json).
     """
 
     def __init__(self, es_client=None):
@@ -26,9 +29,64 @@ class ScanStorage:
         self._lock = threading.Lock()
         self._memory_jobs: Dict[str, dict] = {}
         self._memory_findings: Dict[str, list] = {}
+        self._dirty = False  # flag: in-memory state has unsaved changes
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self._db_file = os.path.abspath(os.path.join(base_dir, "..", "data", "scans_db.json"))
+
+        self._load_local_db()
 
         if self.es:
             self._ensure_indices()
+
+        # Background thread: flush to disk every 2 seconds if dirty
+        self._flush_thread = threading.Thread(target=self._background_flush, daemon=True)
+        self._flush_thread.start()
+
+    def _background_flush(self):
+        """Periodically flush dirty in-memory state to disk."""
+        while True:
+            time.sleep(2.0)
+            if self._dirty:
+                self._save_local_db()
+                self._dirty = False
+
+    def _load_local_db(self):
+        """Load persistent jobs and findings from local JSON file."""
+        if not os.path.exists(self._db_file):
+            return
+        try:
+            with open(self._db_file, "r") as f:
+                data = json.load(f)
+            with self._lock:
+                self._memory_jobs = data.get("jobs", {})
+                self._memory_findings = data.get("findings", {})
+                # Clean up any jobs left running across restarts
+                stale_statuses = {"queued", "fetching", "analyzing", "active_probing", "correlating"}
+                now_str = datetime.now(timezone.utc).isoformat()
+                for job in self._memory_jobs.values():
+                    if job.get("status") in stale_statuses:
+                        job["status"] = "failed"
+                        job["error"] = "Scan interrupted by backend server restart"
+                        job["completed_at"] = now_str
+            logger.info(f"[Storage] Loaded {len(self._memory_jobs)} jobs from disk: {self._db_file}")
+            self._save_local_db()
+        except Exception as e:
+            logger.warning(f"[Storage] Failed to load local DB: {e}")
+
+    def _save_local_db(self):
+        """Save in-memory jobs and findings to disk JSON file."""
+        try:
+            os.makedirs(os.path.dirname(self._db_file), exist_ok=True)
+            with self._lock:
+                payload = {
+                    "jobs": self._memory_jobs,
+                    "findings": self._memory_findings
+                }
+            with open(self._db_file, "w") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as e:
+            logger.warning(f"[Storage] Failed to save local DB: {e}")
 
     def _ensure_indices(self):
         """Create Elasticsearch index templates/mappings if ES is available."""
@@ -64,6 +122,7 @@ class ScanStorage:
 
         with self._lock:
             self._memory_jobs[scan_id] = job_data.copy()
+            self._dirty = True  # mark dirty; background thread will flush
 
         if self.es:
             try:
@@ -71,7 +130,7 @@ class ScanStorage:
                     index=INDEX_METADATA,
                     id=scan_id,
                     body=job_data,
-                    refresh=True
+                    request_timeout=1.5
                 )
                 logger.debug(f"[ES] Indexed job {scan_id}")
             except Exception as e:
@@ -94,6 +153,9 @@ class ScanStorage:
 
         with self._lock:
             self._memory_findings[scan_id] = serializable_findings
+            self._dirty = True
+        # Force immediate flush for findings (important data)
+        self._save_local_db()
 
         if self.es and serializable_findings:
             date_str = datetime.now(timezone.utc).strftime("%Y.%m.%d")
@@ -129,16 +191,17 @@ class ScanStorage:
         return None
 
     def get_all_jobs(self) -> List[dict]:
-        """Retrieve all scan jobs, merging ES and in-memory sources."""
+        """Retrieve all scan jobs — always merges ES + in-memory so historical scans appear."""
         merged = {}
 
-        # First, load from ES if available
+        # Pull all persisted scans from Elasticsearch first
         if self.es:
             try:
                 res = self.es.search(
                     index=INDEX_METADATA,
                     body={"query": {"match_all": {}}, "sort": [{"created_at": {"order": "desc"}}]},
-                    size=100
+                    size=200,
+                    request_timeout=3.0
                 )
                 hits = res.get("hits", {}).get("hits", [])
                 for h in hits:
@@ -146,17 +209,13 @@ class ScanStorage:
                     sid = src.get("scan_id")
                     if sid:
                         merged[sid] = src
-                        # Hydrate in-memory cache so get_job() can find them
-                        with self._lock:
-                            if sid not in self._memory_jobs:
-                                self._memory_jobs[sid] = src
             except Exception as e:
                 logger.warning(f"[ES] Search failed: {e}")
 
-        # Overlay in-memory jobs (may have fresher state than ES)
+        # Overlay with in-memory jobs (more up-to-date for active/recent scans)
         with self._lock:
             for sid, job in self._memory_jobs.items():
-                merged[sid] = job
+                merged[sid] = job  # memory wins for freshness
 
         result = list(merged.values())
         result.sort(key=lambda j: j.get("created_at", ""), reverse=True)
@@ -198,16 +257,17 @@ class ScanStorage:
             if scan_id in self._memory_findings:
                 del self._memory_findings[scan_id]
 
-        if self.es:
-            try:
-                self.es.delete(index=INDEX_METADATA, id=scan_id, ignore=[404])
-                self.es.delete_by_query(
-                    index=f"{INDEX_RESULTS_PREFIX}*",
-                    body={"query": {"term": {"scan_id": scan_id}}},
-                    ignore=[404]
-                )
-                deleted = True
-            except Exception as e:
-                logger.warning(f"[ES] Delete failed for {scan_id}: {e}")
+        if deleted:
+            self._save_local_db()
+            if self.es:
+                try:
+                    self.es.delete(index=INDEX_METADATA, id=scan_id, ignore=[404])
+                    self.es.delete_by_query(
+                        index=f"{INDEX_RESULTS_PREFIX}*",
+                        body={"query": {"term": {"scan_id": scan_id}}},
+                        ignore=[404]
+                    )
+                except Exception as e:
+                    logger.warning(f"[ES] Delete failed for {scan_id}: {e}")
 
         return deleted
