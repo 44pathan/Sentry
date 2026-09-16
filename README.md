@@ -1,8 +1,8 @@
 <div align="center">
-##** This project was firstly named mapper, then sentry sounded better so just FYI **
+##This project was first named Mapper, but Sentry sounded better, so it was renamed. Just FYI.
 
     
-# ⬡ SENTRY
+#  SENTRY
 ### AI-Powered Web Vulnerability Scanner
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python)](https://python.org)
@@ -13,7 +13,6 @@
 
 **Sentry** is an open-source web vulnerability scanner with a Chrome extension, web dashboard, AI-powered analysis (Groq / Gemini / OpenAI), Elasticsearch-backed storage, and a full active + passive scanning engine.
 
-![Dashboard Preview](docs/dashboard.png)
 
 </div>
 
