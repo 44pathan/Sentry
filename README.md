@@ -1,5 +1,7 @@
 <div align="center">
 ##** This project was firstly named mapper, then sentry sounded better so just FYI **
+
+    
 # ⬡ SENTRY
 ### AI-Powered Web Vulnerability Scanner
 
